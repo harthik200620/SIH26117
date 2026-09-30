@@ -97,6 +97,7 @@ def _plan(tasks: list[dict[str, Any]], edges: list[list[str]], rationale: str) -
 
 
 def _register_common(mock: MockEngine) -> None:
+    mock.add_canned({"json": {"route": "workflow"}}, role="planner", contains="Request routing:")
     mock.add_canned(CRITIC_OK, role="utility", contains="GoalSpec deliverables")
     mock.add_canned(REVIEW_PASS, role="reviewer")
 
@@ -512,7 +513,7 @@ def _build_consolidation(mock: MockEngine, ctx: ScenarioContext) -> None:
                 "Merge and draft",
                 "Merge the register and draft the follow-up email",
                 "writer",
-                [("inspection_register.xlsx", "xlsx")],
+                [("inspection_register.xlsx", "xlsx"), ("followup_email.md", "md")],
                 deps=["t1"],
             ),
         ],

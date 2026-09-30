@@ -44,6 +44,13 @@ async def session_create(
 ) -> msg.SessionCreateResult:
     from anyio import to_thread
 
+    from yantra_server.security import workspace_path
+
+    try:
+        params.workspace = str(workspace_path(params.workspace, state.config.paths.workspace_roots))
+    except ValueError as exc:
+        raise RpcError(INVALID_PARAMS, str(exc)) from exc
+
     def _create() -> str:
         with state.db.session() as s:
             row = SessionRow(
@@ -201,14 +208,20 @@ async def trace_get(
 async def run_approve(
     state: AppState, conn: Connection, params: msg.RunApproveParams
 ) -> dict[str, Any]:
-    resolved = state.tools.broker.resolve(params.request_id, params.decision, params.note)
+    resolved = state.tools.broker.resolve(
+        params.request_id, params.decision, params.note, run_id=params.run_id
+    )
     if not resolved and state.conductor is not None:
         if params.request_id.startswith("plan:"):
+            if not params.request_id.startswith(f"plan:{params.run_id}:"):
+                return {"resolved": False}
             resolved = state.conductor.resolve_plan_approval(
-                params.request_id.removeprefix("plan:"), params.decision
+                params.run_id, params.decision, request_id=params.request_id
             )
         else:
-            resolved = state.conductor.resolve_question(params.request_id, params.answers or [])
+            resolved = state.conductor.resolve_question(
+                params.request_id, params.answers or [], run_id=params.run_id
+            )
     return {"resolved": resolved}
 
 

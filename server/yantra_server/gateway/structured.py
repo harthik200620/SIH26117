@@ -91,7 +91,7 @@ def schema_for(model: type[BaseModel]) -> dict[str, Any]:
 
 
 def constraint_for(model: type[BaseModel]) -> Constraint:
-    return Constraint(kind="json_schema", json_schema=schema_for(model))
+    return Constraint(kind="json_schema", json_schema=tighten(schema_for(model)))
 
 
 def choice_constraint(choices: list[str]) -> Constraint:
@@ -129,7 +129,10 @@ def action_schema(
     return {
         "type": "object",
         "properties": {
-            "thought": {"type": "string", "maxLength": 400},
+            # Explanatory text is bounded by the executor before persistence.
+            # Rejecting it here discards otherwise valid actions on engines that
+            # cannot grammar-enforce string lengths. Tool arguments stay strict.
+            "thought": {"type": "string", "description": "Brief reason for this action"},
             "action": {"oneOf": branches} if len(branches) != 1 else branches[0],
         },
         "required": ["thought", "action"],

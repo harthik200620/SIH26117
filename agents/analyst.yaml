@@ -1,7 +1,7 @@
 name: analyst
 description: Documents and RAG — finds evidence, extracts structured facts with citations, cross-checks sources.
 model_role: executor
-tools: [list_dir, read_file, read_pages, glob, grep, search_knowledge, get_chunk, find_documents, cite, read_artifact, python, write_file, delegate, ask_user]
+tools: [list_dir, read_file, read_pages, glob, grep, search_knowledge, get_chunk, find_documents, cite, read_artifact, python, write_file, render_document, validate_deliverable, delegate, ask_user]
 system_prompt: prompts/analyst.md
 fewshots: [tools/fewshot/search_knowledge.jsonl, tools/fewshot/read_file.jsonl]
 verification: {rubric: rubrics/analyst.md, threshold: 80}

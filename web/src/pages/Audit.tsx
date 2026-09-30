@@ -20,7 +20,7 @@ export function AuditPage(): React.ReactElement {
     return () => clearInterval(timer);
   }, []);
 
-  if (!data) return <Page title="Audit"><div className="muted">Loading…</div></Page>;
+  if (!data) return <Page title="Activity log"><div className="muted">Loading…</div></Page>;
   const parsed = data.recent
     .map((line) => {
       try {
@@ -33,9 +33,8 @@ export function AuditPage(): React.ReactElement {
 
   return (
     <Page
-      title="Audit"
+      title="Activity log"
       desc="Hash-chained record of every side-effecting action. Verified continuously."
-      actions={<span className="cmd">yantra audit export</span>}
     >
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
         <Card>

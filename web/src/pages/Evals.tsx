@@ -79,10 +79,9 @@ export function EvalsPage(): React.ReactElement {
     <Page
       title="Evaluations"
       desc="Pass-rate history per suite; scenario, retrieval, drawing and seal checks."
-      actions={<span className="cmd">yantra eval run</span>}
     >
       {runs.length === 0 ? (
-        <Empty glyph="✓" title="No evaluation runs yet" hint={<>Run the suites: <code>yantra eval run</code></>} />
+        <Empty glyph="✓" title="No evaluation runs yet" hint="Recorded evaluation results appear here after a suite is run on this installation." />
       ) : (
         <>
           <History runs={runs} />

@@ -5,11 +5,40 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
+import uuid
 from pathlib import Path
 
 from .base import OutputCallback, Sandbox, SandboxLimits, SandboxResult, drain_process, now
 
 DEFAULT_IMAGE = os.environ.get("YANTRA_SANDBOX_IMAGE", "yantra-sandbox:latest")
+
+
+def container_argv(argv: list[str], workspace: Path) -> list[str]:
+    """Translate host executable/script paths to the container's /work mount."""
+    result = []
+    for index, arg in enumerate(argv):
+        if index == 0 and arg == sys.executable:
+            result.append("python")
+        elif index == 0 and Path(arg).name.lower() in {
+            "powershell",
+            "powershell.exe",
+            "pwsh",
+            "cmd.exe",
+        }:
+            # Shell commands are interpreted by Linux in this backend.
+            return ["sh", "-lc", argv[-1]]
+        elif (
+            not arg.startswith("-")
+            and Path(arg).is_absolute()
+            and Path(arg).resolve().is_relative_to(workspace.resolve())
+        ):
+            result.append(
+                "/work/" + Path(arg).resolve().relative_to(workspace.resolve()).as_posix()
+            )
+        else:
+            result.append(arg)
+    return result
 
 
 def docker_command(
@@ -29,10 +58,13 @@ def docker_command(
             rel_cwd = f"/work/{rel.as_posix()}"
     except ValueError:
         pass
+    uid = getattr(os, "getuid", lambda: 10001)()
+    gid = getattr(os, "getgid", lambda: 10001)()
     cmd = [
         "docker",
         "run",
         "--rm",
+        "--pull=never",
         "--network",
         "none",
         "--read-only",
@@ -40,6 +72,8 @@ def docker_command(
         "ALL",
         "--security-opt",
         "no-new-privileges",
+        "--user",
+        f"{uid}:{gid}" if uid != 0 else "10001:10001",
         "--pids-limit",
         str(limits.max_pids),
         "--memory",
@@ -59,7 +93,7 @@ def docker_command(
     ]
     for key, value in (env or {}).items():
         cmd += ["-e", f"{key}={value}"]
-    cmd += [image, *argv]
+    cmd += [image, *container_argv(argv, workspace)]
     return cmd
 
 
@@ -85,6 +119,8 @@ class DockerSandbox(Sandbox):
         cmd = docker_command(
             argv, workspace=self.workspace, cwd=cwd or self.workspace, limits=self.limits, env=env
         )
+        name = "yantra-" + uuid.uuid4().hex
+        cmd[2:2] = ["--name", name]
         started = now()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -95,12 +131,28 @@ class DockerSandbox(Sandbox):
         if stdin is not None and proc.stdin is not None:
             proc.stdin.write(stdin.encode())
             proc.stdin.close()
-        stdout, stderr, timed_out, truncated = await drain_process(
-            proc,
-            limits=self.limits,
-            timeout_s=timeout_s or self.limits.timeout_s,
-            on_output=on_output,
-        )
+        try:
+            stdout, stderr, timed_out, truncated = await drain_process(
+                proc,
+                limits=self.limits,
+                timeout_s=timeout_s or self.limits.timeout_s,
+                on_output=on_output,
+            )
+        finally:
+            # Killing a Docker CLI does not terminate its container.
+            cleanup = await asyncio.create_subprocess_exec(
+                "docker",
+                "rm",
+                "-f",
+                name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(cleanup.wait(), timeout=10)
+            except TimeoutError:
+                cleanup.kill()
+                await cleanup.wait()
         return SandboxResult(
             exit_code=proc.returncode if proc.returncode is not None else -1,
             stdout=stdout,

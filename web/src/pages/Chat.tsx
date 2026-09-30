@@ -1,460 +1,163 @@
 import React, { useEffect, useRef, useState } from "react";
-import { RpcClient } from "../rpc.js";
-import { Pill, timeAgo } from "../components.js";
+import { getJson, postJson } from "../api.js";
 import { Markdown } from "../md.js";
+import { Icon } from "../Icon.js";
+import { WorkspacePicker } from "../WorkspacePicker.js";
+import { preferredWorkspace, type WorkspaceStatus } from "../workspace.js";
+import { RpcClient } from "../rpc.js";
 
-/* The workbench: a coding-agent-grade chat surface over the same JSON-RPC the TUI speaks.
-   Sessions resume with their history; events stream live; every action is inspectable. */
-
-type Entry =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "thinking"; text: string; done: boolean }
-  | { kind: "plan"; tasks: { id: string; title: string; role: string }[] }
-  | { kind: "tool"; stepId: string; tool: string; argsPreview: string; output: string; summary?: string; ok?: boolean; done: boolean }
-  | { kind: "verify"; taskId: string; verdict: string; score: number | null }
-  | { kind: "escalation"; taskId: string; rung: string; attempt: number }
-  | { kind: "permission"; requestId: string; tool: string; argsPreview: string; explanation: string; resolved?: string }
-  | { kind: "question"; requestId: string; questions: string[]; resolved?: boolean }
-  | { kind: "finished"; status: string; summary: string; artifacts: { name?: string; path?: string }[] }
-  | { kind: "error"; message: string }
-  | { kind: "system"; text: string };
-
-interface TaskChip { id: string; title: string; status: string }
-interface Stats { model: string; tokensOut: number; ctxPct: number; elapsed: number }
-interface SessionInfo { session_id: string; title: string | null; workspace: string; mode: string; updated_at: string; last_goal: string | null }
-
-function argsPreview(args: Record<string, unknown>): string {
-  const s = Object.entries(args ?? {})
-    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-    .join(", ");
-  return s.length > 110 ? s.slice(0, 110) + "…" : s;
-}
+type Event = { method: string; params: Record<string, any> };
+function savedDraft(): string { try { return sessionStorage.getItem("blackbox.draft") ?? ""; } catch { return ""; } }
+const terminal = new Set(["done", "done_with_gaps", "failed", "cancelled", "planned", "interrupted"]);
+const starters: [string, string, string][] = [
+  ["▤", "Review an inspection", "Read inspection-P101.md and maintenance-procedure.md. Create review.md with cited observations, missing information and proposed actions. Do not invent OEM limits."],
+  ["ƒ", "Calculate with evidence", "Read inspection-P101.md. Use calculate_quantity with original source values and units to compute hydraulic and shaft power. Write calculation.md showing inputs, formula, units, results, assumptions and source filenames. Mark the example synthetic."],
+  ["⌘", "Build a local tool", "Write pump_power.py with a hydraulic_power_kw(flow_m3_h, head_m, density_kg_m3=1000) function. Reject negative inputs. Write tests using known reference values. Report whether tests were actually executed."],
+];
 
 export function ChatPage(): React.ReactElement {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [tasks, setTasks] = useState<Record<string, TaskChip>>({});
-  const [input, setInput] = useState("");
-  const [workspace, setWorkspace] = useState("C:\\Users\\HP");
-  const [mode, setMode] = useState<"auto" | "ask" | "plan">("auto");
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [queued, setQueued] = useState<string[]>([]);
-  const rpc = useRef<RpcClient | null>(null);
-  const runIdRef = useRef<string | null>(null);
-  const sessionRef = useRef<string | null>(null);
-  const queuedRef = useRef<string[]>([]);
-  const historyRef = useRef<string[]>([]);
-  const historyPos = useRef(-1);
-  const scroller = useRef<HTMLDivElement | null>(null);
-  const pinned = useRef(true);
-
-  const push = (e: Entry) => setEntries((prev) => [...prev, e]);
-  const patch = (fn: (prev: Entry[]) => Entry[]) => setEntries(fn);
-
-  const refreshSessions = () =>
-    rpc.current
-      ?.call<{ sessions: SessionInfo[] }>("session.list", { limit: 20 })
-      .then((d) => setSessions(d.sessions))
-      .catch(() => undefined);
-
-  useEffect(() => {
-    const client = new RpcClient((method, p) => {
-      switch (method) {
-        case "assistant.delta":
-          patch((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.kind === "assistant") return [...prev.slice(0, -1), { ...last, text: last.text + p.text }];
-            return [...prev, { kind: "assistant", text: String(p.text ?? "") }];
-          });
-          break;
-        case "thinking.delta":
-          patch((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.kind === "thinking" && !last.done) return [...prev.slice(0, -1), { ...last, text: (last.text + p.text).slice(-4000) }];
-            return [...prev, { kind: "thinking", text: String(p.text ?? ""), done: false }];
-          });
-          break;
-        case "plan.updated":
-          push({ kind: "plan", tasks: (p.plan?.tasks ?? []).map((t: any) => ({ id: t.id, title: t.title, role: t.role })) });
-          break;
-        case "task.updated": {
-          const t = p.task ?? {};
-          const tid = t.task_id ?? t.id;
-          if (tid) setTasks((prev) => ({ ...prev, [tid]: { id: String(tid), title: t.title ?? "", status: t.status ?? "" } }));
-          break;
-        }
-        case "tool.started":
-          patch((prev) => [
-            ...prev.map((e) => (e.kind === "thinking" ? { ...e, done: true } : e)),
-            { kind: "tool", stepId: String(p.step_id), tool: String(p.tool), argsPreview: argsPreview(p.args), output: "", done: false },
-          ]);
-          break;
-        case "tool.output":
-          patch((prev) => prev.map((e) => (e.kind === "tool" && e.stepId === p.step_id && !e.done ? { ...e, output: (e.output + p.text).slice(-6000) } : e)));
-          break;
-        case "tool.finished":
-          patch((prev) => prev.map((e) => (e.kind === "tool" && e.stepId === p.step_id ? { ...e, done: true, ok: Boolean(p.ok), summary: String(p.summary ?? "") } : e)));
-          break;
-        case "verify.result":
-          push({ kind: "verify", taskId: String(p.task_id), verdict: String(p.report?.verdict ?? "?"), score: p.report?.reviewer?.score ?? null });
-          break;
-        case "escalation":
-          push({ kind: "escalation", taskId: String(p.task_id), rung: String(p.rung), attempt: Number(p.attempt ?? 1) });
-          break;
-        case "permission.request":
-          push({ kind: "permission", requestId: String(p.request_id), tool: String(p.tool ?? "action"), argsPreview: argsPreview(p.args), explanation: String(p.explanation ?? "") });
-          break;
-        case "question":
-          push({ kind: "question", requestId: String(p.request_id), questions: p.questions ?? [] });
-          break;
-        case "run.stats":
-          setStats({ model: String(p.active_model ?? ""), tokensOut: Number(p.tokens_out ?? 0), ctxPct: Number(p.context_pct ?? 0), elapsed: Number(p.elapsed_s ?? 0) });
-          break;
-        case "run.finished": {
-          setRunning(false);
-          patch((prev) => [
-            ...prev.map((e) => (e.kind === "thinking" ? { ...e, done: true } : e)),
-            { kind: "finished", status: String(p.status), summary: String(p.summary ?? ""), artifacts: p.artifacts ?? [] },
-          ]);
-          refreshSessions();
-          const next = queuedRef.current.shift();
-          setQueued([...queuedRef.current]);
-          if (next) void promptRun(next);
-          break;
-        }
-        case "error":
-          push({ kind: "error", message: `${p.code}: ${p.message}` });
-          break;
-      }
-    }, setConnected);
-    client.connect();
-    rpc.current = client;
-    const t = setTimeout(refreshSessions, 400);
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape" && runIdRef.current) void client.call("run.cancel", { run_id: runIdRef.current });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("keydown", onKey);
-      client.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (pinned.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [entries, tasks]);
-
-  const promptRun = async (text: string) => {
-    if (!rpc.current || !sessionRef.current) return;
-    setRunning(true);
-    setStats(null);
-    setTasks({});
-    try {
-      const res = await rpc.current.call<{ run_id: string }>("session.prompt", { session_id: sessionRef.current, text, mode });
-      runIdRef.current = res.run_id;
-    } catch (e) {
-      setRunning(false);
-      push({ kind: "error", message: String(e) });
-    }
+  const [preview, setPreview] = useState<any>(null);
+  const [recovery, setRecovery] = useState<any>(null);
+  const [pendingIds, setPendingIds] = useState<string[] | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [status, setStatus] = useState<any>(null), [workspace, setWorkspace] = useState("");
+  const [model, setModel] = useState(""), [mode, setMode] = useState("ask");
+  const [input, setInput] = useState(savedDraft), [goal, setGoal] = useState("");
+  const [events, setEvents] = useState<Event[]>([]), [runId, setRunId] = useState<string | null>(null);
+  const [running, setRunning] = useState(false), [error, setError] = useState("");
+  const [files, setFiles] = useState<any[]>([]);
+  const [tab, setTab] = useState("workflow"), [query, setQuery] = useState("");
+  const [hits, setHits] = useState<any[]>([]), [indexing, setIndexing] = useState(false);
+  const [indexNote, setIndexNote] = useState(""), [streamState, setStreamState] = useState("idle");
+  const [runStartedAt, setRunStartedAt] = useState(Date.now());
+  const [elapsed, setElapsed] = useState(0), [answer, setAnswer] = useState("");
+  const [resolved, setResolved] = useState<string[]>([]);
+  const source = useRef<EventSource | null>(null), bottom = useRef<HTMLDivElement>(null), initialised = useRef(false);
+  const currentWorkspace = useRef(workspace);
+  currentWorkspace.current = workspace;
+  const refresh = async () => {
+    try { const s = await getJson<any>("/api/workbench/status"); setStatus(s);
+      if (!initialised.current) { setWorkspace(preferredWorkspace(s)); initialised.current = true; }
+    } catch (e) { setError(String(e)); }
   };
-
+  useEffect(() => { try { if (input) sessionStorage.setItem("blackbox.draft", input); else sessionStorage.removeItem("blackbox.draft"); } catch {} }, [input]);
+  const previewFile = async (path: string) => {
+    try { const result = await getJson(`/api/workbench/file-preview?workspace_path=${encodeURIComponent(workspace)}&path=${encodeURIComponent(path)}`); if (currentWorkspace.current === workspace) setPreview(result); }
+    catch (e) { if (currentWorkspace.current === workspace) setError(String(e)); }
+  };
+  useEffect(() => { setPreview(null); setHits([]); setIndexNote(""); setFiles([]); }, [workspace]);
+  const refreshFiles = async () => {
+    if (!workspace) return;
+    try { const result = await getJson<any>(`/api/workbench/files?workspace_path=${encodeURIComponent(workspace)}`); if (currentWorkspace.current === workspace) setFiles(result.files); }
+    catch (e) { if (currentWorkspace.current === workspace) setError(String(e)); }
+  };
+  useEffect(() => { void refresh(); const t = setInterval(refresh, 15000); return () => { clearInterval(t); source.current?.close(); }; }, []);
+  useEffect(() => { void refreshFiles(); }, [workspace]);
+  useEffect(() => { if (!running) return; const update = () => setElapsed(Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000))); update(); const t = setInterval(update, 1000); return () => clearInterval(t); }, [running, runStartedAt]);
+  useEffect(() => {
+    if (events.length) bottom.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    else if (!goal) bottom.current?.closest(".conversation-scroll")?.scrollTo({ top: 0 });
+  }, [events.length, goal]);
+  const connect = (id: string) => {
+    source.current?.close(); const stream = new EventSource(`/api/workbench/runs/${id}/events`); source.current = stream;
+    setStreamState("connecting"); stream.onopen = () => setStreamState("live"); stream.onerror = () => setStreamState("reconnecting");
+    stream.onmessage = message => { const event: Event = JSON.parse(message.data); setEvents(prev => [...prev, event]);
+      if (event.method === "run.finished") { if (event.params.status === "interrupted") void getJson<any>(`/api/workbench/runs/${id}/recovery`).then(setRecovery).catch(e => setError(String(e))); stream.close(); setStreamState("complete"); setRunning(false); void refresh(); void refreshFiles(); }
+    };
+  };
   const send = async () => {
-    const text = input.trim();
-    if (!text || !rpc.current) return;
-    setInput("");
-    historyRef.current = [text, ...historyRef.current].slice(0, 50);
-    historyPos.current = -1;
-    push({ kind: "user", text });
-    if (running) {
-      queuedRef.current = [...queuedRef.current, text];
-      setQueued([...queuedRef.current]);
-      push({ kind: "system", text: "queued — will run when the current goal finishes" });
-      return;
-    }
+    if (!input.trim() || running) return;
+    setError(""); setRecovery(null); setEvents([]); setGoal(input.trim()); setResolved([]); setElapsed(0); setRunStartedAt(Date.now()); setRunning(true);
+    try { const r = await postJson<any>("/api/workbench/runs", { workspace, goal: input.trim(), model: model || null, mode }); sessionStorage.setItem("blackbox.openRun", r.run_id); setRunId(r.run_id); setInput(""); connect(r.run_id); }
+    catch (e) { setError(String(e)); setRunning(false); }
+  };
+  const resume = async (id: string) => {
+    sessionStorage.setItem("blackbox.openRun", id);
+    try { const r = await getJson<any>(`/api/workbench/runs/${id}`); initialised.current = true; if (r.created_at) setRunStartedAt(Date.parse(/Z$|[+-]\d{2}:\d{2}$/.test(r.created_at) ? r.created_at : r.created_at + "Z")); setRecovery(r.status === "interrupted" ? await getJson<any>(`/api/workbench/runs/${id}/recovery`) : null); setMode(r.mode ?? "ask"); setModel(r.model ?? ""); setRunId(id); setGoal(r.goal); setWorkspace(r.workspace); setEvents([]); setResolved([]); setRunning(!terminal.has(r.status)); connect(id); }
+    catch (e) { setError(String(e)); }
+  };
+  const continueRun = async () => {
+    if (!runId) return;
+    setError("");
     try {
-      if (!sessionRef.current) {
-        const created = await rpc.current.call<{ session_id: string }>("session.create", { workspace, collections: [], mode, title: text.slice(0, 60) });
-        sessionRef.current = created.session_id;
-        setSessionId(created.session_id);
-        push({ kind: "system", text: `session started in ${workspace} · mode ${mode}` });
-        refreshSessions();
-      }
-      await promptRun(text);
-    } catch (e) {
-      setRunning(false);
-      push({ kind: "error", message: String(e) });
-    }
+      await postJson(`/api/workbench/runs/${runId}/resume`, {});
+      setRecovery(null); setEvents([]); setResolved([]); setRunning(true); connect(runId);
+    } catch (e) { setError(String(e)); }
   };
+  const stop = async () => { try { if (runId) await postJson(`/api/workbench/runs/${runId}/cancel`, {}); } catch (e) { setError(String(e)); } };
+  const index = async () => {
+    setIndexing(true); setIndexNote("");
+    try { const r = await postJson<any>("/api/workbench/index", { workspace }); setIndexNote(`${r.documents} updated · ${r.skipped} unchanged · ${r.chunks} chunks · ${r.errors} errors · ${r.seconds}s`); }
+    catch (e) { setError(String(e)); } finally { setIndexing(false); }
+  };
+  const search = async () => {
+    try { const r = await postJson<any>("/api/workbench/search", { workspace, query }); setHits(r.hits); setIndexNote(r.hits.length ? `${r.hits.length} local passages` : "No matching passages. Index this workspace first."); }
+    catch (e) { setError(String(e)); }
+  };
+  const approve = async (requestId: string, decision: string) => {
+    const client = new RpcClient(() => {}); client.connect();
+    try { const response = await client.call<{resolved: boolean}>("run.approve", { run_id: runId, request_id: requestId, decision, answers: answer ? [answer] : [] }); if (!response.resolved) throw new Error("This request has expired or was already answered. Refresh the task to see its current state."); setResolved(p => [...p, requestId]); setAnswer(""); }
+    catch (e) { setError(String(e)); } finally { client.close(); }
+  };
+  const plan = [...events].reverse().find(e => e.method === "plan.updated")?.params.plan?.tasks ?? [];
+  const finished = [...events].reverse().find(e => e.method === "run.finished")?.params;
+  const conversational = finished?.response_kind === "conversation";
+  const liveStats = [...events].reverse().find(e => e.method === "run.stats")?.params;
+  const stats = finished?.budget_used ? { ...liveStats, tokens_in: finished.budget_used.prompt_tokens, tokens_out: finished.budget_used.completion_tokens, elapsed_s: finished.budget_used.seconds_used } : liveStats;
+  const taskState = (id: string) => [...events].reverse().find(e => e.method === "task.updated" && (e.params.task?.task_id ?? e.params.task?.id)?.endsWith(id))?.params.task?.status ?? "pending";
 
-  const resume = async (info: SessionInfo) => {
-    if (!rpc.current || running) return;
-    setEntries([]);
-    setTasks({});
-    setStats(null);
-    runIdRef.current = null;
-    sessionRef.current = info.session_id;
-    setSessionId(info.session_id);
-    setWorkspace(info.workspace);
-    if (info.mode === "auto" || info.mode === "ask" || info.mode === "plan") setMode(info.mode);
-    try {
-      const data = await rpc.current.call<any>("session.resume", { session_id: info.session_id, last_seq: 0 });
-      const history: Entry[] = [{ kind: "system", text: `resumed session in ${info.workspace}` }];
-      for (const run of data.runs ?? []) {
-        history.push({ kind: "user", text: run.goal });
-        if (run.final?.summary) {
-          history.push({ kind: "finished", status: run.status, summary: run.final.summary, artifacts: run.final.artifacts ?? [] });
-        } else {
-          history.push({ kind: "system", text: `run ${String(run.run_id).slice(0, 8)} · ${run.status}` });
+  useEffect(() => {
+    const open = (event: Event) => { void resume((event as unknown as CustomEvent<string>).detail); };
+    const fresh = () => { source.current?.close(); setRecovery(null); setRunId(null); setGoal(""); setInput(""); setEvents([]); setRunning(false); setError(""); if (status) setWorkspace(preferredWorkspace(status)); };
+    window.addEventListener("blackbox:open-run", open as unknown as EventListener);
+    window.addEventListener("blackbox:new-task", fresh);
+    return () => { window.removeEventListener("blackbox:open-run", open as unknown as EventListener); window.removeEventListener("blackbox:new-task", fresh); };
+  }, [status]);
+  useEffect(() => {
+    setPendingIds(null); if (!runId) return;
+    let disposed = false;
+    const poll = async () => { try { const r = await getJson<{pending_ids: string[]}>(`/api/workbench/runs/${runId}/permissions`); if (!disposed) setPendingIds(r.pending_ids); } catch {} };
+    void poll(); const timer = setInterval(poll, 2500);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [runId]);
+  useEffect(() => { const id = sessionStorage.getItem("blackbox.openRun"); if (id) void resume(id); }, []);
+  const changeWorkspace = (selection: WorkspaceStatus) => {
+    source.current?.close(); sessionStorage.removeItem("blackbox.openRun");
+    setRecovery(null); setRunId(null); setGoal(""); setEvents([]); setResolved([]); setError("");
+    setWorkspace(selection.workspace); setStatus((previous: any) => ({ ...previous, roots: selection.roots }));
+  };
+  return <div className={`studio ${inspectorOpen ? "with-inspector" : "without-inspector"}`}>
+    <header className="studio-top"><div><span className="eyebrow">BLACKBOX WORKSPACE</span><div className="studio-title">{goal ? "Current conversation" : "Assistant"}</div></div><div className="top-actions"><span className="connection-dot" /><span>{status ? "Private inference" : "Connecting"}</span><button aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(v => !v)}>Task details</button></div></header>
+    <div className="workspace-bar"><span>▱</span><label htmlFor="workspace">Workspace</label><input id="workspace" value={workspace} readOnly title={workspace} /><WorkspacePicker value={workspace} roots={status?.roots ?? []} disabled={running} onChange={changeWorkspace}/><button className="browse-workspace" onClick={() => { setInspectorOpen(true); setTab("files"); void refreshFiles(); }}>Browse files ↗</button></div>
+    <div className="studio-body"><section className="conversation"><div className="conversation-scroll" aria-live="polite">
+      {!goal && <div className="welcome"><div className="welcome-emblem" aria-hidden="true">▣</div><div className="eyebrow">YOUR LOCAL WORKSPACE</div><h1>From evidence to action.</h1><p>Ask a question, investigate your documents, or create a deliverable.<br />Your work stays on your infrastructure.</p><div className="starter-grid">{starters.map(s => <button key={s[1]} className="starter" onClick={() => setInput(s[2])}><span className="starter-icon"><Icon name={s[0] === "▤" ? "documents" : s[0] === "ƒ" ? "assurance" : "workspace"} size={21}/></span><b>{s[1]}</b><span>{s[0] === "▤" ? "Findings, sources & next steps" : s[0] === "ƒ" ? "Inputs, units & working shown" : "Code, checks & execution"} <Icon name="arrow" size={13}/></span></button>)}</div><div className="readiness"><span className={status?.ready ? "ready-indicator" : "missing-indicator"} />{!status ? "Checking local models…" : status.ready ? `${status.models.length} private model${status.models.length === 1 ? "" : "s"} available` : "Model setup required"}<span>·</span><a href="#models">Manage models →</a></div>{status?.security.code_execution === "disabled" && <div className="quiet-note">File tools, retrieval and arithmetic are available. Running generated code requires an isolated sandbox.</div>}</div>}
+      {goal && <><div className="user-message"><span className="avatar">YOU</span><div>{goal}</div></div><div className="run-heading"><span className="agent-avatar">▣</span><b>BlackBox</b><span>{finished ? String(finished.status).replaceAll("_", " ") : running ? pendingIds?.length ? "Waiting for you" : "Working" : "Task"}</span>{running && <span className="working-pulse" />}</div></>}
+      <div className="event-timeline">{events.map((event, i) => {
+        const p = event.params;
+        if (event.method === "assistant.delta") return <div className="progress-text" key={i}>{p.text}</div>;
+        if (event.method === "plan.updated") return <div className="milestone" key={i}><span>✓</span> Plan created · {p.plan?.tasks?.length ?? 0} steps</div>;
+        if (event.method === "tool.started") {
+          const result = events.slice(i).find(e => e.method === "tool.finished" && e.params.step_id === p.step_id);
+          const output = events.filter(e => e.method === "tool.output" && e.params.step_id === p.step_id).map(e => e.params.text).join("");
+          return <details className={`action-card ${result?.params.ok === false ? "action-failed" : ""}`} key={i}><summary><span className="action-icon">{result ? result.params.ok ? "✓" : "!" : "◌"}</span><b>{String(p.tool).replaceAll("_", " ")}</b><span>{result ? result.params.summary : "Running…"}</span><i>⌄</i></summary><pre>{JSON.stringify(p.args, null, 2)}</pre>{output && <pre>{output}</pre>}</details>;
         }
-        if (run.status === "running" || run.status === "planning") {
-          runIdRef.current = run.run_id;
-          setRunning(true);
-        }
-      }
-      setEntries(history);
-    } catch (e) {
-      push({ kind: "error", message: String(e) });
-    }
-  };
-
-  const approve = async (requestId: string, decision: string, answers?: string[]) => {
-    if (!rpc.current || !runIdRef.current) return;
-    await rpc.current.call("run.approve", { run_id: runIdRef.current, request_id: requestId, decision, answers });
-    patch((prev) =>
-      prev.map((e) => {
-        if (e.kind === "permission" && e.requestId === requestId) return { ...e, resolved: decision };
-        if (e.kind === "question" && e.requestId === requestId) return { ...e, resolved: true };
-        return e;
-      }),
-    );
-  };
-
-  const reset = () => {
-    sessionRef.current = null;
-    runIdRef.current = null;
-    queuedRef.current = [];
-    setSessionId(null);
-    setEntries([]);
-    setTasks({});
-    setStats(null);
-    setRunning(false);
-    setQueued([]);
-  };
-
-  const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-      return;
-    }
-    if (e.key === "ArrowUp" && !input) {
-      const h = historyRef.current;
-      if (h.length) {
-        historyPos.current = Math.min(historyPos.current + 1, h.length - 1);
-        setInput(h[historyPos.current] ?? "");
-        e.preventDefault();
-      }
-    }
-    if (e.key === "ArrowDown" && historyPos.current >= 0) {
-      historyPos.current -= 1;
-      setInput(historyPos.current >= 0 ? (historyRef.current[historyPos.current] ?? "") : "");
-      e.preventDefault();
-    }
-  };
-
-  const taskList = Object.values(tasks);
-
-  return (
-    <div className="wb">
-      <div className="wb-rail">
-        <button className="primary" style={{ width: "100%" }} onClick={reset}>+ New session</button>
-        <div className="wb-rail-list">
-          {sessions.map((s) => (
-            <div key={s.session_id} className={`wb-sess ${s.session_id === sessionId ? "on" : ""}`} onClick={() => resume(s)}>
-              <div className="wb-sess-title">{s.title || s.last_goal || "(untitled)"}</div>
-              <div className="wb-sess-meta">{timeAgo(s.updated_at)} · {s.workspace.split("\\").pop()}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="chat-shell">
-        <div className="chat-topbar">
-          <span className="muted">workspace</span>
-          <input className="ws-input" value={workspace} onChange={(e) => setWorkspace(e.target.value)} disabled={sessionId !== null} spellCheck={false} />
-          <div className="mode-tabs">
-            {(["auto", "ask", "plan"] as const).map((m) => (
-              <button key={m} className={mode === m ? "mode on" : "mode"} onClick={() => setMode(m)}>{m}</button>
-            ))}
-          </div>
-          <span style={{ flex: 1 }} />
-          {connected ? <Pill tone="ok">connected</Pill> : <Pill tone="bad">reconnecting…</Pill>}
-        </div>
-
-        <div
-          className="term"
-          ref={scroller}
-          onScroll={() => {
-            const el = scroller.current;
-            if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-          }}
-        >
-          {entries.length === 0 && (
-            <div className="term-welcome">
-              <div className="term-box">
-                <div className="term-logo">✻ Welcome to YANTRA</div>
-                <div className="t-path">cwd: {workspace}</div>
-              </div>
-              <div>Type a goal below. The agent plans it, works step by step in your workspace, verifies its own work, and shows every tool call here.</div>
-              <div className="term-hints">
-                <span>"Create a folder reports and write status.txt inside it"</span>
-                <span>"Read the files in this folder and summarise them into notes.md"</span>
-                <span>Enter send · Shift+Enter newline · ↑ history · Esc stop</span>
-              </div>
-            </div>
-          )}
-          {entries.map((e, i) => <EntryView key={i} e={e} onApprove={approve} />)}
-          {running && <div className="t-running">▍ working…</div>}
-        </div>
-
-        {taskList.length > 0 && (
-          <div className="task-strip">
-            {taskList.map((t) => (
-              <span key={t.id} className={`task-chip s-${t.status}`} title={t.title}>
-                {t.status === "done" ? "✓" : t.status === "running" ? "●" : t.status === "failed" || t.status === "partial" ? "✗" : "○"} {t.id.split(":").pop()}
-              </span>
-            ))}
-            {queued.length > 0 && <span className="task-chip">⧗ {queued.length} queued</span>}
-          </div>
-        )}
-
-        <div className="chat-inputrow">
-          <span className="t-prompt">❯</span>
-          <textarea
-            rows={1}
-            value={input}
-            placeholder={running ? "running — Enter queues the next goal, Esc stops" : "Describe what you want done…"}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onInputKey}
-          />
-          {running ? (
-            <button className="danger" onClick={() => runIdRef.current && rpc.current?.call("run.cancel", { run_id: runIdRef.current })}>Stop</button>
-          ) : (
-            <button className="primary" onClick={send} disabled={!input.trim()}>Send</button>
-          )}
-        </div>
-        <div className="chat-statusline">
-          {stats ? (
-            <>model <b>{stats.model || "…"}</b> · {stats.tokensOut.toLocaleString()} tok out · ctx {Math.round(stats.ctxPct)}% · {Math.round(stats.elapsed)}s</>
-          ) : (
-            <>mode <b>{mode}</b> · every action is sandboxed, verified and audit-logged</>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ToolCard({ e }: { e: Extract<Entry, { kind: "tool" }> }): React.ReactElement {
-  const [open, setOpen] = useState(false);
-  const hasOutput = e.output.trim().length > 0;
-  return (
-    <div className="t-tool">
-      <div className={hasOutput ? "t-tool-head click" : "t-tool-head"} onClick={() => hasOutput && setOpen(!open)}>
-        <span className={e.done ? (e.ok ? "t-dot ok" : "t-dot bad") : "t-dot run"}>●</span> <b>{e.tool}</b>{" "}
-        <span className="t-args">{e.argsPreview}</span>
-        {hasOutput && e.done && <span className="t-expander">{open ? "▾" : "▸"}</span>}
-      </div>
-      {hasOutput && (open || !e.done) && (
-        <pre className="t-out">
-          {(open ? e.output : e.output.slice(-1200)).split("\n").map((line, i) => (
-            <div key={i} className={line.startsWith("+") ? "d-add" : line.startsWith("-") ? "d-del" : undefined}>{line || " "}</div>
-          ))}
-        </pre>
-      )}
-      {e.done && <div className="t-result">⎿ {e.ok ? "✔" : "✘"} {e.summary}</div>}
-    </div>
-  );
-}
-
-function EntryView({ e, onApprove }: { e: Entry; onApprove: (id: string, d: string, a?: string[]) => void }): React.ReactElement | null {
-  const [answer, setAnswer] = useState("");
-  switch (e.kind) {
-    case "user":
-      return <div className="t-user"><span className="t-prompt">❯</span> {e.text}</div>;
-    case "assistant":
-      return <div className="t-assistant"><Markdown text={e.text} /></div>;
-    case "thinking":
-      return e.done ? null : <div className="t-thinking">✳ {e.text.slice(-160)}</div>;
-    case "system":
-      return <div className="t-system">{e.text}</div>;
-    case "plan":
-      return (
-        <div className="t-card">
-          <div className="t-card-head">Plan · {e.tasks.length} task{e.tasks.length === 1 ? "" : "s"}</div>
-          {e.tasks.map((t) => (
-            <div key={t.id} className="t-plan-row"><span className="t-tid">{t.id}</span> {t.title} <span className="t-role">{t.role}</span></div>
-          ))}
-        </div>
-      );
-    case "tool":
-      return <ToolCard e={e} />;
-    case "verify":
-      return <div className={`t-verify ${e.verdict === "pass" ? "ok" : "warn"}`}>verify {e.taskId.split(":").pop()}: {e.verdict}{e.score != null ? ` (reviewer ${e.score})` : ""}</div>;
-    case "escalation":
-      return <div className="t-escalation">↻ {e.taskId.split(":").pop()} escalating: {e.rung} (attempt {e.attempt})</div>;
-    case "permission":
-      return (
-        <div className="t-card ask">
-          <div className="t-card-head">Permission — <b>{e.tool}</b></div>
-          <div className="t-args" style={{ margin: "4px 0 8px" }}>{e.argsPreview}{e.explanation ? ` — ${e.explanation}` : ""}</div>
-          {e.resolved ? (
-            <div className="t-system">answered: {e.resolved}</div>
-          ) : (
-            <div className="t-btnrow">
-              <button className="primary" onClick={() => onApprove(e.requestId, "once")}>Allow once</button>
-              <button onClick={() => onApprove(e.requestId, "always")}>Always this session</button>
-              <button className="danger" onClick={() => onApprove(e.requestId, "deny")}>Deny</button>
-            </div>
-          )}
-        </div>
-      );
-    case "question":
-      return (
-        <div className="t-card ask">
-          <div className="t-card-head">The agent asks</div>
-          {e.questions.map((q, i) => <div key={i} style={{ margin: "2px 0" }}>{q}</div>)}
-          {e.resolved ? (
-            <div className="t-system">answered</div>
-          ) : (
-            <div className="t-btnrow">
-              <input className="ws-input" style={{ flex: 1 }} value={answer} onChange={(ev) => setAnswer(ev.target.value)} placeholder="Your answer…" />
-              <button className="primary" onClick={() => onApprove(e.requestId, "once", [answer])}>Answer</button>
-            </div>
-          )}
-        </div>
-      );
-    case "finished":
-      return (
-        <div className={`t-card done ${e.status === "done" ? "" : "gaps"}`}>
-          <div className="t-card-head">{e.status === "done" ? "✔ Done" : e.status === "done_with_gaps" ? "◐ Done with gaps" : `✘ ${e.status}`}</div>
-          <div className="t-final"><Markdown text={e.summary} /></div>
-          {e.artifacts.length > 0 && (
-            <div className="t-artifacts">
-              {e.artifacts.map((a, i) => <div key={i}>📄 {a.path ?? a.name}</div>)}
-            </div>
-          )}
-        </div>
-      );
-    case "error":
-      return <div className="t-error">✘ {e.message}</div>;
-    default:
-      return null;
-  }
+        if (event.method === "verify.result") return <details className="verification-card" key={i}><summary>{p.report?.verdict === "pass" ? "✓" : "↻"} Validation: {p.report?.verdict} <span>{p.report?.reviewer?.method === "deterministic" ? "Exact content checks" : "Checks + reviewer"}</span></summary><div className="review-evidence">{p.report?.checks?.map((c: any, j: number) => <div key={`check-${j}`} className={c.passed ? "criterion-met" : "criterion-gap"}><b>{c.passed ? "✓" : "!"} {String(c.check?.kind ?? "Check").replaceAll("_", " ")}</b><p>{c.detail}</p></div>)}{p.report?.reviewer?.criteria?.map((c: any, j: number) => <div key={`criterion-${j}`} className={c.status === "met" ? "criterion-met" : "criterion-gap"}><b>{c.status === "met" ? "✓" : "!"} {c.requirement}</b><p>{c.evidence}</p><small>{c.status}</small></div>)}{!p.report?.reviewer?.criteria?.length && p.report?.reviewer?.failures?.map((f: any, j: number) => <div key={`failure-${j}`} className="criterion-gap"><b>{f.what}</b><p>{f.why}</p></div>)}</div><details className="review-record"><summary>Full verification record</summary><pre>{JSON.stringify(p.report, null, 2)}</pre></details></details>;
+        if (event.method === "escalation") return <div className="retry-note" key={i}>↻ Revising after feedback · attempt {p.attempt}</div>;
+        if (event.method === "error") return <div className="inline-error" key={i}>{p.message}</div>;
+        if ((event.method === "permission.request" || event.method === "question") && !resolved.includes(p.request_id) && (pendingIds === null || pendingIds.includes(p.request_id))) return <div className="approval-card" key={i}><div className="permission-eyebrow">PERMISSION REQUEST</div><b>{p.explanation ?? "BlackBox needs your approval"}</b><p>{p.tool ?? p.questions?.join("\n")}</p>{p.tool === "plan" ? <ol className="approval-plan">{plan.map((step: any) => <li key={step.id}><b>{step.title}</b><p>{step.intent}</p></li>)}</ol> : p.args && <pre>{JSON.stringify(p.args, null, 2)}</pre>}{event.method === "question" && <input aria-label="Answer" value={answer} onChange={e => setAnswer(e.target.value)} />}<button className="primary" onClick={() => approve(p.request_id, "once")}>{event.method === "question" ? "Send answer" : "Allow once"}</button><button onClick={() => approve(p.request_id, "deny")}>Decline</button></div>;
+        return null;
+      })}</div>
+      {runId && finished && !conversational && <div className="validation-export"><a href={`/api/workbench/runs/${encodeURIComponent(runId)}/validation-record`} download>Download validation record ↓</a><small>Includes model choices, checks and execution evidence. Contains task content; human approval remains separate.</small></div>}
+      {finished && <section className={`final-response ${conversational ? "assistant-reply" : finished.status === "done" ? "verified" : "has-gaps"}`}><div className="eyebrow">{conversational ? "BLACKBOX" : finished.status === "done" ? "WORKFLOW COMPLETE" : "WORKFLOW RESULT"}</div><Markdown text={finished.summary || "No summary available."} />{finished.unverified?.length > 0 && <p className="retry-note">Unverified: {finished.unverified.join("; ")}</p>}<div className="deliverables">{finished.artifacts?.map((a: any, i: number) => <a key={i} href={`/api/workbench/runs/${runId}/download?path=${encodeURIComponent(a.path ?? a.name)}`} download>▤ {a.name ?? a.path} <span>↓</span></a>)}</div></section>}
+      {recovery && <section className="approval-card" aria-label="Task recovery"><div className="permission-eyebrow">TASK INTERRUPTED</div><b>Your saved work is still available.</b>{recovery.can_resume ? <><p>Continue from the saved plan with the remaining budget. Approval requests will be renewed.</p><button className="primary" onClick={continueRun}>Resume task</button></> : <><p>An operation may have changed files before its result was recorded. Automatic continuation is blocked. Inspect the affected files before starting another task.</p>{recovery.uncertain_operations?.map((op: any) => <details key={op.call_id}><summary>{String(op.tool).replaceAll("_", " ")}</summary><pre>{JSON.stringify(op.args, null, 2)}</pre></details>)}</>}</section>}
+      {error && <div role="alert" className="inline-error">{error}</div>}<div ref={bottom} />
+    </div><div className="composer-area"><div className="composer"><textarea aria-label="Task instructions" value={input} onChange={e => setInput(e.target.value)} placeholder="Ask a question, discuss an idea, or describe work to do…" rows={3} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} /><div className="composer-bottom"><select aria-label="Model" value={model} onChange={e => setModel(e.target.value)} disabled={running}><option value="">◆ Auto-select model</option>{status?.models.filter((m: any) => !m.roles.includes("embed")).map((m: any) => <option key={m.id} value={m.id}>{m.id}</option>)}</select><select aria-label="Execution mode" value={mode} onChange={e => setMode(e.target.value)} disabled={running}><option value="auto">Auto</option><option value="ask">Ask before changes</option><option value="plan">Plan only</option></select><span className="composer-spacer" />{running ? <button className="stop-button" onClick={stop}>■ Stop</button> : <button className="send-button" aria-label="Run task" onClick={send} disabled={!input.trim() || !status?.ready}>↑</button>}</div></div><div className="composer-caption"><span>Workspace access only · Enter to run · Shift + Enter for a new line</span><span>{running ? `${elapsed}s · ${streamState}` : "Runs on your infrastructure"}</span></div></div></section>
+    <aside className="inspector"><div className="inspector-tabs">{["workflow", "files", "evidence"].map(t => <button key={t} className={tab === t ? "selected" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "workflow" && <><div className="inspector-section"><span className="eyebrow">EXECUTION PLAN</span>{plan.length ? <ol className="plan-list">{plan.map((t: any, i: number) => <li key={t.id} className={taskState(t.id)}><span>{taskState(t.id) === "done" ? "✓" : i + 1}</span><div><b>{t.title}</b><small>{t.role} · {taskState(t.id)}</small></div></li>)}</ol> : <div className="empty-inspector"><div>◈</div>The plan appears here when you start a task.<small>Specialist agents. Shared evidence. Bounded retries.</small></div>}</div><div className="inspector-section"><span className="eyebrow">THIS RUN</span><dl className="run-metrics"><dt>Tools completed</dt><dd>{events.filter(e => e.method === "tool.finished").length}</dd><dt>Input tokens</dt><dd>{stats?.tokens_in?.toLocaleString() ?? "—"}</dd><dt>Output tokens</dt><dd>{stats?.tokens_out?.toLocaleString() ?? "—"}</dd><dt>Total tokens</dt><dd>{stats ? ((stats.tokens_in ?? 0) + (stats.tokens_out ?? 0)).toLocaleString() : "—"}</dd><dt>Elapsed</dt><dd>{stats ? `${Math.round(stats.elapsed_s)}s` : running ? `${elapsed}s` : "—"}</dd><dt>Model</dt><dd className="model-metric">{stats?.active_model || "Awaiting inference"}</dd></dl></div></>}
+      {tab === "files" && <div className="inspector-section"><div className="section-heading"><span className="eyebrow">{files.length} WORKSPACE FILES</span><button aria-label="Refresh files" onClick={refreshFiles}>↻</button></div><div className="file-list">{files.map(f => <div key={f.path}><span>▤</span><button onClick={() => previewFile(f.path)} title="Preview file">{f.path}</button><button aria-label={`Reference ${f.path}`} onClick={() => setInput(p => `${p}${p ? " " : ""}${f.path}`)}>＋</button><small>{Math.max(1, Math.round(f.bytes / 1024))} KB</small></div>)}</div><p className="quiet-note">Click a filename to preview it, or + to reference it. Access stays inside the configured workspace.</p></div>}
+      {tab === "evidence" && <div className="inspector-section"><span className="eyebrow">DOCUMENT SEARCH</span><p className="quiet-note">{status?.retrieval}. Indexing runs when a request needs a workspace workflow.</p><button className="wide-button" onClick={index} disabled={indexing || running}>{indexing ? "Indexing…" : "↻ Index workspace"}</button><div className="evidence-search"><input aria-label="Search local evidence" value={query} onChange={e => setQuery(e.target.value)} placeholder="Equipment tag, requirement…" onKeyDown={e => { if (e.key === "Enter" && query.trim()) void search(); }} /><button aria-label="Search" onClick={search} disabled={!query.trim()}>→</button></div>{indexNote && <p className="quiet-note">{indexNote}</p>}{hits.map(h => <details className="evidence-hit" key={h.chunk_id}><summary>▤ {h.title}<small>page {h.page} · {h.chunk_id.slice(0, 8)}</small></summary><p>{h.text}</p><small>{h.path}</small></details>)}</div>}
+      {preview && <section className="file-preview"><div className="section-heading"><b>{preview.path}</b><button aria-label="Close file preview" onClick={() => setPreview(null)}>×</button></div>{preview.truncated && <p className="quiet-note">Showing the first 100 KB.</p>}<pre>{preview.text}</pre></section>}
+      <div className="inspector-security"><span>◈</span><div><b>{status?.security.application_guard ? "Application network guard active" : "Checking network guard"}</b><small>{status?.security.os_isolation_verified ? "Network namespace checked" : "OS isolation: not attested"} <a href="#seal">View evidence ↗</a></small></div></div>
+    </aside></div>
+  </div>;
 }

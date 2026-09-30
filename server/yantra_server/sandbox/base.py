@@ -2,7 +2,8 @@
 
 Backends: bwrap (Linux default), docker (--network none fallback), local (dev-only,
 UNSEALED, no isolation — ADR 0004). Every run records exit/timing/output, the files it
-changed under the workspace, and asserts zero network attempts where enforcement exists.
+changed under the workspace. Isolation policy is distinct from measured network traffic;
+an absent blocked-attempt count does not establish zero packets or zero attempts.
 """
 
 from __future__ import annotations
@@ -132,9 +133,13 @@ async def drain_process(
     readers = asyncio.gather(
         reader(proc.stdout, stdout_parts, True), reader(proc.stderr, stderr_parts, False)
     )
-    try:
-        await asyncio.wait_for(asyncio.shield(readers), timeout=timeout_s)
+
+    async def completed() -> None:
+        await asyncio.shield(readers)
         await proc.wait()
+
+    try:
+        await asyncio.wait_for(completed(), timeout=timeout_s)
     except TimeoutError:
         timed_out = True
         with contextlib.suppress(ProcessLookupError):
@@ -144,6 +149,13 @@ async def drain_process(
             await asyncio.wait_for(readers, timeout=5)
         except (TimeoutError, asyncio.CancelledError):
             readers.cancel()
+    except asyncio.CancelledError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        readers.cancel()
+        await asyncio.gather(readers, return_exceptions=True)
+        raise
     return (
         b"".join(stdout_parts).decode("utf-8", errors="replace"),
         b"".join(stderr_parts).decode("utf-8", errors="replace"),
@@ -165,6 +177,10 @@ def select_sandbox(config: SandboxConfig, workspace: Path, *, sealed: bool) -> S
         max_pids=config.max_pids,
     )
     backend = config.backend
+    if backend == "disabled":
+        from .disabled import DisabledSandbox
+
+        return DisabledSandbox(workspace, limits)
     if backend == "auto":
         if BwrapSandbox.available():
             backend = "bwrap"

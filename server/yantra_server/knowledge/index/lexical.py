@@ -7,10 +7,14 @@ query for the exact tag hits and a semantic query still matches the words around
 from __future__ import annotations
 
 import re
+import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import tantivy
+
+__all__ = ["LexicalIndex", "TantivyLexicalIndex", "tokenize"]
 
 TAG_RE = re.compile(r"[A-Za-z]{1,4}-?\d{2,5}[A-Za-z]?|\d+\"|[A-Za-z0-9]+")
 
@@ -26,7 +30,7 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
-class LexicalIndex:
+class TantivyLexicalIndex:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.mkdir(parents=True, exist_ok=True)
@@ -47,7 +51,11 @@ class LexicalIndex:
 
     def writer(self) -> Any:
         if self._writer is None:
-            self._writer = self.index.writer(heap_size=64_000_000)
+            # Bound Windows file-writer concurrency; bulk ingestion is already
+            # serialized by KnowledgeService and shares memory with local inference.
+            self._writer = self.index.writer(
+                heap_size=64_000_000, num_threads=1 if sys.platform == "win32" else 0
+            )
         return self._writer
 
     def add(
@@ -83,8 +91,19 @@ class LexicalIndex:
 
     def commit(self) -> None:
         if self._writer is not None:
-            self._writer.commit()
-            self._writer = None
+            writer = self._writer
+            try:
+                writer.commit()
+                writer.wait_merging_threads()
+            except Exception:
+                # A failed batch must not be silently committed by a later document.
+                # Do not retry an uncertain native commit; re-ingestion replaces the
+                # document by ID after the caller records its failed status.
+                with suppress(Exception):
+                    writer.rollback()
+                raise
+            finally:
+                self._writer = None
         self.index.reload()
 
     def search(
@@ -131,7 +150,7 @@ class LexicalIndex:
                 "chunk_id": doc["chunk_id"][0],
                 "document_id": doc["document_id"][0],
                 "title": doc["title"][0],
-                "text": doc["text"][0].split("\n")[0][:2000],
+                "text": doc["text"][0].rsplit("\n", 1)[0][:2000],
                 "page": doc["page"][0] if doc["page"] else None,
                 "section": doc["section"][0] if doc["section"] else "",
                 "doc_type": doc["doc_type"][0] if doc["doc_type"] else None,
@@ -143,3 +162,11 @@ class LexicalIndex:
         writer = self.writer()
         writer.delete_documents("document_id", document_id)
         self.commit()
+
+
+# Native Tantivy segment writes intermittently fail on this Windows deployment.
+# Choose a persistent transactional backend rather than returning an empty index.
+if sys.platform == "win32":
+    from .sqlite_lexical import SQLiteLexicalIndex as LexicalIndex
+else:
+    LexicalIndex = TantivyLexicalIndex

@@ -6,6 +6,8 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from yantra_server.agents import AgentRoster
 from yantra_server.gateway.engines.base import ChatMessage, Decoding
 from yantra_server.gateway.service import ModelRequest
@@ -42,6 +44,13 @@ async def make_plan(
     previous_plan: Plan | None = None,
 ) -> Plan:
     """Plan → critic → up to MAX_REVISIONS repair rounds; structural checks always enforced."""
+    if state.config.execution.compact_planning:
+        plan = await _compact_plan(state, goal_spec, failure_context=failure_context)
+        structural = _structural_findings(plan, goal_spec, roster)
+        if structural:
+            raise ValueError("Invalid compact plan: " + "; ".join(structural))
+        plan.version = previous_plan.version + 1 if previous_plan else 1
+        return plan
     with span("plan", kind="plan") as sp:
         exemplars = _plan_exemplars(state, goal=goal_spec.objective)
         plan = await _draft_plan(
@@ -52,6 +61,8 @@ async def make_plan(
             critique = await _critique(state, roster, goal_spec, plan)
             findings = structural + [f for f in critique.findings if f not in structural]
             sp.set(f"round_{round_no}_findings", findings)
+            if round_no == MAX_REVISIONS and structural:
+                raise ValueError("Plan has unresolved structural errors: " + "; ".join(structural))
             if not findings or round_no == MAX_REVISIONS:
                 break
             plan = await _draft_plan(
@@ -66,6 +77,189 @@ async def make_plan(
         plan.version = (previous_plan.version + 1) if previous_plan else 1
         sp.set("tasks", [t.id for t in plan.tasks])
         return plan
+
+
+class CompactTask(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Presentation metadata must not discard an otherwise valid bounded plan.
+    # Some grammar engines do not enforce string lengths; trim only the UI title.
+    title: str
+    instruction: str = Field(max_length=2000)
+    role: str = Field(pattern="^(analyst|coder|writer|data_engineer|drawing_engineer)$")
+    output_file: str = Field(max_length=200)
+
+
+class CompactPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tasks: list[CompactTask] = Field(min_length=1, max_length=4)
+
+
+async def _compact_plan(
+    state: AppState, goal: GoalSpec, failure_context: str | None = None
+) -> Plan:
+    from .types import (
+        ArtifactSpec,
+        Check,
+        FileExistsCheck,
+        PlanTask,
+        RubricCheck,
+        TaskBudget,
+        ToolSucceededCheck,
+    )
+
+    # Only recognize an explicit leading instruction, not mentions in quoted documents
+    # or negative instructions such as "Do not use Python".
+    requires_python = bool(
+        re.match(
+            r"\s*(?:please\s+)?use\s+(?:the\s+)?python\s+(?:tool\b|to\b)", goal.objective, re.I
+        )
+    )
+
+    simple = re.fullmatch(
+        r"(?:write|create)\s+[\"'`]?([\w./-]+\.(?:txt|md|csv|json|py))[\"'`]?\s+containing\s+(?:exactly\s+)?(.+)",
+        goal.objective.strip(),
+        re.I | re.S,
+    )
+    if simple:
+        draft = CompactPlan(
+            tasks=[
+                CompactTask(
+                    title="Write the requested file",
+                    instruction=goal.objective[:500],
+                    role="writer",
+                    output_file=simple[1],
+                )
+            ]
+        )
+    else:
+        draft = await _draft_compact(state, goal, failure_context)
+        outputs = {task.output_file for task in draft.tasks if task.output_file}
+        source_only = set()
+        for path in outputs:
+            suffix = re.escape(path) + r"[\"'`]?(?![\w/\\-]|\.[\w])"
+            read = re.search(
+                r"\b(?:read_file|read_pages)\s+(?:with\s+)?path\s+[\"'`]?" + suffix,
+                goal.objective,
+                re.I,
+            ) or re.search(r"\bread\s+[\"'`]?" + suffix, goal.objective, re.I)
+            write = re.search(
+                r"\b(?:write|create|save|produce|edit|update|rewrite|overwrite)\s+(?:to\s+)?[\"'`]?"
+                + suffix,
+                goal.objective,
+                re.I,
+            )
+            if read and not write:
+                source_only.add(path)
+        # A planner may put read inputs in output_file. Explicitly read-only
+        # paths cannot become completion criteria or authorize source rewrites.
+        outputs -= source_only
+        for task in draft.tasks:
+            if task.output_file in source_only:
+                task.output_file = ""
+        grounded_outputs = {
+            path
+            for path in outputs
+            if re.search(
+                r"(?<![\w./\\-])" + re.escape(path) + r"(?![\w/\\-]|\.[\w])", goal.objective
+            )
+        }
+        # Intermediate scratch files must not become invented user requirements.
+        # When exactly one planned output is explicitly named, keep the full objective
+        # in one task; its executor can still use intermediate files as needed.
+        if len(grounded_outputs) == 1 and re.search(
+            r"\b(?:write|create|save|produce)\s+(?:to\s+)?[\"'`]?"
+            + re.escape(next(iter(grounded_outputs)))
+            + r"(?![\w/\\-]|\.[\w])",
+            goal.objective,
+            re.I,
+        ):
+            outputs = grounded_outputs
+        if len(draft.tasks) > 1 and len(outputs) == 1:
+            # Reading/calculating/writing a single deliverable is one transaction.
+            # Weak planners otherwise duplicate the objective across several agents.
+            draft = CompactPlan(
+                tasks=[
+                    CompactTask(
+                        title="Produce and check the requested deliverable",
+                        instruction=goal.objective[:500],
+                        role="coder"
+                        if requires_python or any(t.role == "coder" for t in draft.tasks)
+                        else "analyst",
+                        output_file=next(iter(outputs)),
+                    )
+                ]
+            )
+    tasks = []
+    for i, task in enumerate(draft.tasks):
+        from pathlib import PurePosixPath, PureWindowsPath
+
+        path = task.output_file
+        if path and (
+            PurePosixPath(path).is_absolute()
+            or PureWindowsPath(path).is_absolute()
+            or ".." in PurePosixPath(path.replace("\\", "/")).parts
+        ):
+            raise ValueError("Planned outputs must use workspace-relative paths")
+        checks: list[Check] = [FileExistsCheck(path=path)] if path else [RubricCheck(min_score=80)]
+        if requires_python and i == 0:
+            task.role = "coder"
+            checks.append(ToolSucceededCheck(tool="python"))
+        tasks.append(
+            PlanTask(
+                id=f"t{i + 1}",
+                title=task.title[:100],
+                intent=task.instruction + "\nOriginal objective: " + goal.objective,
+                role=task.role,
+                outputs=[ArtifactSpec(name=path)] if path else [],
+                acceptance=checks,
+                budget=TaskBudget(
+                    max_steps=state.config.execution.max_steps_per_task,
+                    max_seconds=min(900, state.config.budgets.max_seconds),
+                    max_tokens=12000,
+                    max_retries=state.config.execution.max_task_retries,
+                ),
+            )
+        )
+    for deliverable in goal.deliverables:
+        if not any(o.name == deliverable.name for t in tasks for o in t.outputs):
+            tasks[-1].outputs.append(ArtifactSpec(name=deliverable.name, type=deliverable.type))
+            tasks[-1].acceptance.append(FileExistsCheck(path=deliverable.name))
+    return Plan(tasks=tasks, edges=[[tasks[i].id, tasks[i + 1].id] for i in range(len(tasks) - 1)])
+
+
+async def _draft_compact(
+    state: AppState, goal: GoalSpec, failure_context: str | None
+) -> CompactPlan:
+    result = await state.gateway.chat(
+        ModelRequest(
+            role="planner",
+            schema_model=CompactPlan,
+            messages=[
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "Create the smallest execution plan. Usually ONE task. At most four tasks for complex goals. "
+                        "Reading files, calculation and writing an output can be one task. Never add generic research, "
+                        "review or verification tasks. Verification is automatic. Use writer for files/reports, coder for "
+                        "code, analyst for calculations. The instruction MUST preserve the exact user requirements and "
+                        "literal requested text. output_file is the requested filename or empty for a chat answer. "
+                        "Do not invent input files or create tasks for intermediate scratch files. "
+                        "If the user asks to execute Python, use coder even when the output is JSON. "
+                        "Do not invent facts or unrelated work. Return only JSON."
+                    ),
+                ),
+                ChatMessage(
+                    role="user",
+                    content=goal.model_dump_json()
+                    + ("\nRepair these failures: " + failure_context if failure_context else ""),
+                ),
+            ],
+            decoding=Decoding(temperature=0, max_tokens=900),
+        )
+    )
+    draft = result.parsed
+    assert isinstance(draft, CompactPlan)
+    return draft
 
 
 async def _draft_plan(

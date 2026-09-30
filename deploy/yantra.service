@@ -1,0 +1,36 @@
+# Reference single-operator Linux/private-cloud deployment. Verify kernel cgroup-BPF
+# enforcement with native negative network probes before processing confidential data.
+[Unit]
+Description=YANTRA private industrial workbench
+After=local-fs.target
+
+[Service]
+Type=simple
+User=yantra
+Group=yantra
+WorkingDirectory=/opt/yantra
+Environment=YANTRA_SEALED=1
+EnvironmentFile=/etc/yantra/environment
+ExecStart=/opt/yantra/.venv/bin/python /opt/yantra/scripts/run_workbench.py --workspace /srv/yantra/workspace --models-dir /srv/yantra/models --data-dir /var/lib/yantra --llama-server /opt/yantra/runtime/llama-server --sandbox disabled
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/srv/yantra/workspace /var/lib/yantra
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

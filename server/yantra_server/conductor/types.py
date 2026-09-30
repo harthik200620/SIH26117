@@ -39,6 +39,11 @@ class FileExistsCheck(BaseModel):
     path: str
 
 
+class ToolSucceededCheck(BaseModel):
+    kind: Literal["tool_succeeded"] = "tool_succeeded"
+    tool: Literal["python", "run_tests", "bash"]
+
+
 class SchemaValidCheck(BaseModel):
     kind: Literal["schema_valid"] = "schema_valid"
     path: str
@@ -102,6 +107,7 @@ class CustomCheck(BaseModel):
 
 Check = Annotated[
     FileExistsCheck
+    | ToolSucceededCheck
     | SchemaValidCheck
     | TestsPassCheck
     | CommandSucceedsCheck
@@ -137,7 +143,9 @@ class ArtifactSpec(BaseModel):
 class PlanTask(BaseModel):
     id: str = Field(pattern=r"^t\d{1,2}$", description="t1, t2, … in execution order")
     title: str = Field(max_length=120)
-    intent: str = Field(max_length=600, description="What done looks like, concretely")
+    intent: str = Field(
+        max_length=13000, description="What done looks like, including original user constraints"
+    )
     role: str = Field(description="Agent name from the roster")
     inputs: list[str] = Field(
         default_factory=list, description="Task ids or context refs this needs"
@@ -210,11 +218,24 @@ class ReviewerFailure(BaseModel):
     why: str = ""
 
 
+class ReviewedCriterion(BaseModel):
+    requirement: str = Field(min_length=1, max_length=350)
+    evidence: str = Field(min_length=1, max_length=650)
+    status: Literal["met", "missing", "incorrect", "unverifiable"]
+
+
+class EvidenceReview(BaseModel):
+    criteria: list[ReviewedCriterion] = Field(min_length=1, max_length=12)
+    all_requirements_covered: bool
+
+
 class ReviewerReport(BaseModel):
     score: int = Field(ge=0, le=100)
     failures: list[ReviewerFailure] = Field(default_factory=list)
     fix_instructions: list[str] = Field(default_factory=list)
     verdict: Literal["pass", "fail"]
+    criteria: list[ReviewedCriterion] = Field(default_factory=list)
+    method: Literal["model", "deterministic"] = "model"
 
 
 class VerificationOutcome(BaseModel):

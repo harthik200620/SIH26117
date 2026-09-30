@@ -1,0 +1,12 @@
+name: portable
+description: Portable real inference with conservative memory use; supports CPU and configured GPU backends.
+config_defaults:
+  context: {executor: 5000, planner: 5000, reviewer: 4000, utility: 2000}
+  execution: {compact_planning: true, max_parallel_tasks: 1, max_steps_per_task: 12, max_task_retries: 2}
+  knowledge: {lexical_only: true, auto_index_workspace: true, ingest_workers: 1}
+  budgets: {max_tokens: 40000, max_seconds: 1200, max_tool_calls: 50}
+  gateway: {max_resident_models: 1, request_timeout_s: 180, max_retries: 1, cache_ttl_s: 0}
+  sandbox: {backend: disabled, max_seconds: 60, max_rss_mb: 2048}
+  seal: {allowlist: [127.0.0.0/8, '::1/128']}
+engines: []
+concurrency: {interactive_sessions: 1}

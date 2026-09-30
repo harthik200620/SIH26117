@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from yantra_server.artifacts.store import ArtifactNotFound
 from yantra_server.db.base import Database, utcnow
 from yantra_server.db.models import ToolCallRow
 from yantra_server.observe.audit_chain import AuditChain
@@ -66,7 +67,7 @@ class ToolRuntime:
 
             side_effecting = tool.side_effects not in ("none", "read")
             if side_effecting and ctx.idempotency_key:
-                replayed = self._replayed_result(ctx)
+                replayed = self._replayed_result(ctx, tool_name, args_dict)
                 if replayed is not None:
                     sp.set("replayed", True)
                     return replayed
@@ -118,7 +119,9 @@ class ToolRuntime:
 
     # ------------------------------------------------------------- persistence
 
-    def _replayed_result(self, ctx: ToolContext) -> ToolResult | None:
+    def _replayed_result(
+        self, ctx: ToolContext, tool_name: str, args: dict[str, Any]
+    ) -> ToolResult | None:
         from sqlalchemy import select
 
         with self.db.session() as s:
@@ -126,16 +129,23 @@ class ToolRuntime:
                 select(ToolCallRow).where(
                     ToolCallRow.run_id == (ctx.run_id or ""),
                     ToolCallRow.idempotency_key == ctx.idempotency_key,
-                    ToolCallRow.status == "done",
                 )
             ).scalar_one_or_none()
-            if row is None or row.result_artifact_id is None:
+            if row is None:
                 return None
-            payload = ctx.state.artifacts.read_bytes(row.result_artifact_id)
+            if row.tool != tool_name or row.args != args:
+                return ToolResult.fail("Idempotency key conflicts with a different operation")
+            if row.status not in ("done", "error") or row.result_artifact_id is None:
+                return ToolResult.fail(
+                    "Prior operation has no confirmed outcome; automatic repetition is blocked"
+                )
             try:
+                payload = ctx.state.artifacts.read_bytes(row.result_artifact_id)
                 return ToolResult.model_validate_json(payload)
-            except ValidationError:
-                return None
+            except (ArtifactNotFound, OSError, ValueError, KeyError):
+                return ToolResult.fail(
+                    "Recorded result is unavailable; automatic repetition is blocked"
+                )
 
     def _record_start(
         self, tool_name: str, args: dict[str, Any], permission: dict[str, Any], ctx: ToolContext

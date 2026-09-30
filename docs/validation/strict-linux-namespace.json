@@ -1,0 +1,92 @@
+{
+  "verified": true,
+  "method": "linux_network_namespace_libc_probes",
+  "kernel": "6.18.33.1-microsoft-standard-WSL2",
+  "interfaces": [
+    "lo"
+  ],
+  "network_namespace": "net:[4026532303]",
+  "effective_capabilities": 0,
+  "no_new_privileges": true,
+  "non_loopback_routes": [],
+  "probes": [
+    {
+      "name": "public_ipv4_tcp",
+      "blocked": true,
+      "errno": 101
+    },
+    {
+      "name": "public_ipv4_udp_dns",
+      "blocked": true,
+      "errno": 101
+    },
+    {
+      "name": "cloud_metadata_tcp",
+      "blocked": true,
+      "errno": 101
+    },
+    {
+      "name": "cloud_metadata_udp_dns",
+      "blocked": true,
+      "errno": 101
+    },
+    {
+      "name": "public_ipv6_tcp",
+      "blocked": true,
+      "errno": 101
+    },
+    {
+      "name": "public_ipv6_udp_dns",
+      "blocked": true,
+      "errno": 101
+    }
+  ],
+  "scope": "current namespace and inheriting children; trusted host/kernel/browser",
+  "packet_capture": "not performed",
+  "child": {
+    "verified": true,
+    "method": "linux_network_namespace_libc_probes",
+    "kernel": "6.18.33.1-microsoft-standard-WSL2",
+    "interfaces": [
+      "lo"
+    ],
+    "network_namespace": "net:[4026532303]",
+    "effective_capabilities": 0,
+    "no_new_privileges": true,
+    "non_loopback_routes": [],
+    "probes": [
+      {
+        "name": "public_ipv4_tcp",
+        "blocked": true,
+        "errno": 101
+      },
+      {
+        "name": "public_ipv4_udp_dns",
+        "blocked": true,
+        "errno": 101
+      },
+      {
+        "name": "cloud_metadata_tcp",
+        "blocked": true,
+        "errno": 101
+      },
+      {
+        "name": "cloud_metadata_udp_dns",
+        "blocked": true,
+        "errno": 101
+      },
+      {
+        "name": "public_ipv6_tcp",
+        "blocked": true,
+        "errno": 101
+      },
+      {
+        "name": "public_ipv6_udp_dns",
+        "blocked": true,
+        "errno": 101
+      }
+    ],
+    "scope": "current namespace and inheriting children; trusted host/kernel/browser",
+    "packet_capture": "not performed"
+  }
+}

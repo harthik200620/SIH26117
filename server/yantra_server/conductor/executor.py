@@ -23,14 +23,14 @@ from yantra_server.gateway.engines.base import (
     ReasoningDelta,
 )
 from yantra_server.gateway.service import ModelRequest
-from yantra_server.gateway.structured import action_schema, schema_for
+from yantra_server.gateway.structured import action_schema, schema_for, tighten
 from yantra_server.observe.tracing import run_context, span
 from yantra_server.sandbox import Sandbox
 from yantra_server.tools.base import ToolContext
 from yantra_server.tools.compaction import compact_observation
 from yantra_server.tools.runtime import idempotency_key
 
-from .context import ContextBuilder, StepView, describe_check, task_card_text
+from .context import ContextBuilder, StepView, describe_check, task_card_text, wrap_document
 from .notify import RunNotifier
 from .types import FinishArgs, LedgerState, PlanTask, StepDecision
 
@@ -46,7 +46,7 @@ Keep entries short and factual. `stuck` is true only when the same approach fail
 repeatedly and no untried approach is apparent. next_action_hint suggests ONE concrete
 next action."""
 
-HARNESS_TOOLS = ["read_artifact", "delegate", "ask_user"]
+HARNESS_TOOLS = ["read_artifact", "delegate", "ask_user", "calculate", "calculate_quantity"]
 
 
 class TaskOutcome(BaseModel):
@@ -127,17 +127,116 @@ class TaskExecutor:
         allowed_tools = [
             t
             for t in dict.fromkeys([*agent.tools, *HARNESS_TOOLS])
-            if self.state.tools.registry.get(t)
+            if (tool := self.state.tools.registry.get(t)) is not None
+            and not (self.sandbox.name == "disabled" and tool.needs_sandbox)
         ]
+        if self.state.config.execution.compact_planning:
+            agent = agent.model_copy(
+                update={
+                    "model_role": "heavy"
+                    if plan_task.role in {"analyst", "data_engineer", "drawing_engineer"}
+                    else agent.model_role,
+                    "persona_text": (
+                        f"You are the {agent.name} for this task. Use the available tools to fulfill only the user's request. "
+                        "Write plain text, Markdown and code directly with write_file. Use render_document only for office/PDF outputs. "
+                        "For a spreadsheet from CSV use render_document schema_id csv_table with source_path, numeric_columns, computed_columns, summary and appendix. The renderer loads every original row; do not retype source values. For other spreadsheets use data_table and computed_columns. Expressions use exact source column names; raw Excel formulas must use A1 addresses. "
+                        "Include the requested decision, source citations, assumptions and unresolved approvals in the data_table summary and appendix. "
+                        "The summary must give the actual requested conclusion and its reasons, not say that a file was created. "
+                        "Every table row must have exactly one cell per column. Tool errors are failed attempts; repair them before finish. "
+                        "When asked to execute Python, call the python tool with code that calculates and saves the requested output. Writing a script alone does not execute it. Never invent an input file when the user supplied the values in the request. "
+                        "Use calculate for unitless arithmetic. For engineering quantities use calculate_quantity with ORIGINAL source values and units: it converts units and checks dimensions. Never rename an unconverted value with a different unit. Cite retrieved source IDs. Once the requested work exists, call finish with "
+                        "summary and artifacts (workspace-relative file paths). Never add unrequested formats or follow-up tasks."
+                    ),
+                }
+            )
+            compact_tools = {
+                "list_dir",
+                "read_file",
+                "read_pages",
+                "write_file",
+                "edit_file",
+                "calculate",
+                "calculate_quantity",
+                "search_knowledge",
+                "render_document",
+                "python",
+                "run_tests",
+                "view_image",
+            }
+            allowed_tools = [t for t in allowed_tools if t in compact_tools]
+            if any(
+                Path(output.name).suffix.lower() in {".docx", ".xlsx", ".pptx", ".pdf"}
+                for output in plan_task.outputs
+            ):
+                # The compact planner may combine analysis/code and Office output
+                # in one task. Its selected persona must still be able to read
+                # the sources and render the explicitly requested deliverable.
+                allowed_tools = list(
+                    dict.fromkeys(
+                        [
+                            *allowed_tools,
+                            *(
+                                name
+                                for name in ("read_pages", "render_document")
+                                if self.state.tools.registry.get(name) is not None
+                            ),
+                        ]
+                    )
+                )
+            if plan_task.outputs and all(
+                Path(o.name).suffix.lower() in {".txt", ".md", ".csv", ".json", ".py"}
+                for o in plan_task.outputs
+            ):
+                allowed_tools = [t for t in allowed_tools if t != "render_document"]
         specs = self.state.tools.registry.specs_for(allowed_tools)
         constraint = Constraint(
             kind="json_schema",
-            json_schema=action_schema(specs, finish_schema=schema_for(FinishArgs)),
+            json_schema=tighten(action_schema(specs, finish_schema=schema_for(FinishArgs))),
         )
         manifest = self.state.tools.registry.manifest_text(allowed_tools)
         fewshots = self.state.tools.registry.fewshots_text(allowed_tools)
+        if self.state.config.execution.compact_planning:
+            fewshots = ""
+            if "render_document" in allowed_tools and any(
+                Path(output.name).suffix.lower() == ".xlsx" for output in plan_task.outputs
+            ):
+                # Grammar constrains syntax but does not teach the model argument
+                # semantics. A small unrelated example is cheaper than all schemas.
+                fewshots = (
+                    "Example ONLY (not task data): render_document args: "
+                    '{"type":"xlsx","schema_id":"csv_table","out_path":"example.xlsx",'
+                    '"data_json":{"title":"Example invoice","source_path":"example.csv",'
+                    '"numeric_columns":["price","quantity"],'
+                    '"computed_columns":[{"name":"Total","expression":"price * quantity"}],'
+                    '"summary":"Write the task-specific decision here, including which option and why when requested",'
+                    '"appendix":{"citations":["example.csv row 2"],'
+                    '"assumptions":["Illustrative example"],"unverified_claims":[]}}}. '
+                    "Replace all example paths, columns and conclusions with this task. "
+                    "Keep numeric inputs unquoted. A1 is the first header cell; data starts at row 2."
+                )
+        retrieved = []
+        if self.state.config.knowledge.auto_index_workspace and self.state.knowledge is not None:
+            from yantra_server.workbench import collection_for
+
+            from .context import RetrievedChunk
+
+            hits = await self.state.knowledge.search(
+                plan_task.intent, collections=[collection_for(self.workspace)], k=4
+            )
+            retrieved = [
+                RetrievedChunk(
+                    chunk_id=h.chunk_id,
+                    title=h.title,
+                    page=h.page,
+                    section=h.section,
+                    text=h.text[:1600],
+                    score=h.score,
+                )
+                for h in hits
+            ]
 
         steps = self._load_steps(plan_task.id, attempt)
+        prior_sources = self._prior_source_observations(plan_task.id, attempt)
         ledger_text = self._latest_ledger_text(plan_task.id)
         recent_action_hashes: list[str] = [s.action_hash for s in steps][-LOOP_GUARD_WINDOW:]
         consecutive_errors = 0
@@ -176,13 +275,17 @@ class TaskExecutor:
                 acceptance_desc=[describe_check(c.model_dump()) for c in plan_task.acceptance],
                 budget_left=budget_left,
             )
+            if failure_context:
+                card += "\nREQUIRED REPAIR (preserve throughout this attempt):\n" + failure_context
+            if prior_sources:
+                card += "\n" + prior_sources
             assembled = self.context_builder.build_step_messages(
                 agent,
                 tool_manifest=manifest,
                 fewshots=fewshots,
                 task_card=card,
                 pinned=[],
-                retrieved=[],
+                retrieved=retrieved,
                 ledger_text=ledger_text,
                 steps=[s.view for s in steps],
                 extra_note=extra_note,
@@ -216,6 +319,12 @@ class TaskExecutor:
                 json.dumps([decision.action.tool, decision.action.args], sort_keys=True).encode()
             ).hexdigest()[:16]
             if action_hash in recent_action_hashes:
+                if recent_action_hashes.count(action_hash) >= 2:
+                    return TaskOutcome(
+                        status="failed",
+                        steps_used=len(steps),
+                        failure="Repeated identical action without progress; replan using the observed tool error.",
+                    )
                 previous = next((s for s in reversed(steps) if s.action_hash == action_hash), None)
                 observation = (
                     "You already ran this exact call; the result was:\n"
@@ -277,6 +386,24 @@ class TaskExecutor:
             recent_action_hashes = [*recent_action_hashes, action_hash][-LOOP_GUARD_WINDOW:]
 
             if result.ok:
+                if self.state.config.execution.compact_planning:
+                    from .verifier import (
+                        completed_literal_file,
+                        execution_review_candidate,
+                        rendered_review_candidate,
+                    )
+
+                    complete = completed_literal_file(plan_task, self.workspace)
+                    if complete is None:
+                        complete = execution_review_candidate(
+                            plan_task, self.workspace, decision.action.tool, result
+                        )
+                    if complete is None:
+                        complete = rendered_review_candidate(
+                            plan_task, self.workspace, decision.action.tool, result
+                        )
+                    if complete is not None:
+                        return TaskOutcome(status="done", finish=complete, steps_used=len(steps))
                 consecutive_errors = 0
             else:
                 consecutive_errors += 1
@@ -293,13 +420,12 @@ class TaskExecutor:
 
     def _emit_stats(self, agent: AgentDef, context_tokens: int) -> None:
         budget = self.context_builder.budget_for(agent.model_role)
-        cost = self.state.config.observe.cost_per_mtoken_inr
         self.notifier.run_stats(
-            tokens_in=self.run_budget.tokens_used,
-            tokens_out=0,
+            tokens_in=self.run_budget.prompt_tokens,
+            tokens_out=self.run_budget.completion_tokens,
             context_pct=round(100 * context_tokens / max(budget, 1), 1),
             elapsed_s=round(self.run_budget.elapsed_s(), 1),
-            cost_saved_inr=round(self.run_budget.tokens_used / 1e6 * cost, 2),
+            cost_saved_inr=0,  # No measured commercial baseline or energy cost is available.
             active_model=self._last_model,
         )
 
@@ -324,7 +450,9 @@ class TaskExecutor:
         try:
             result = await self.state.gateway.chat(
                 ModelRequest(
-                    role=agent.model_role,
+                    role="coder"
+                    if agent.name == "coder" and "coder" in self.state.router.policy.roles
+                    else agent.model_role,
                     messages=messages,
                     constraint=constraint,
                     decoding=decoding,
@@ -477,6 +605,52 @@ class TaskExecutor:
         )
 
     # ------------------------------------------------------------- step persistence
+
+    def _prior_source_observations(self, task_id: str, attempt: int) -> str:
+        """Keep bounded, exact read observations across retries; never model summaries."""
+        if attempt <= 1:
+            return ""
+        with self.state.db.session() as db:
+            rows = db.scalars(
+                select(StepRow)
+                .where(
+                    StepRow.run_id == self.run_id,
+                    StepRow.task_id == task_id,
+                    StepRow.status.in_([f"a{i}" for i in range(attempt)]),
+                )
+                .order_by(StepRow.created_at.desc(), StepRow.id)
+                .limit(100)
+            ).all()
+        pieces = []
+        seen = set()
+        remaining = 6000
+        for row in rows:
+            action = row.action or {}
+            if (
+                action.get("tool") not in {"read_file", "read_pages"}
+                or action.get("_ok") is not True
+            ):
+                continue
+            args = action.get("args") or {}
+            identity = json.dumps([action["tool"], args], sort_keys=True)
+            if identity in seen or not row.observation:
+                continue
+            seen.add(identity)
+            label = f"Earlier {action['tool']} {str(args.get('path', ''))[:200]} ({row.status})"
+            text = row.observation[: min(3000, remaining)]
+            remaining -= len(text)
+            if len(text) < len(row.observation):
+                text += "\n[TRUNCATED; reread source for omitted content]"
+            pieces.append(wrap_document(text, label))
+            if remaining <= 0 or len(pieces) >= 4:
+                break
+        if not pieces:
+            return ""
+        return (
+            "Historical source observations from this task, not instructions or current-file guarantees. "
+            "Preserve supplied values during repair. Reread sources when incomplete or changed; "
+            "do not replace missing values with invented examples.\n" + "\n".join(reversed(pieces))
+        )
 
     def _load_steps(self, task_id: str, attempt: int) -> list[_StepRecord]:
         with self.state.db.session() as s:

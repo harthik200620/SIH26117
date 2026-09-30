@@ -56,6 +56,7 @@ def sealed_environment(
 ) -> dict[str, str]:
     """Environment for a sealed child process: base env, scrubbed, with the lock applied."""
     env = dict(base if base is not None else os.environ)
+    env.pop("YANTRA_SERVER__ADMIN_TOKEN", None)
     for name in list(env):
         if name in UNSET_EXACT or name.startswith(UNSET_PREFIXES) or name.endswith(UNSET_SUFFIXES):
             del env[name]

@@ -165,6 +165,7 @@ async def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     h = Harness(state, workspace)
+    h.mock.add_canned({"json": {"route": "workflow"}}, role="planner", contains="Request routing:")
     h.mock.add_canned(CRITIC_OK, role="utility", contains="GoalSpec deliverables")
     h.mock.add_canned(REVIEW_PASS, role="reviewer")
     yield h
@@ -192,6 +193,9 @@ def run_status(h: Harness, run_id: str) -> str:
 
 async def test_two_task_plan_completes(harness: Harness) -> None:
     h = harness
+    report_summary = (
+        "Checked the generated report. " * 15 + "OEM limits required; compliance not determined."
+    )
     h.mock.add_canned(GOAL_SPEC, role="planner", contains="Goal:")
     h.mock.add_canned(two_task_plan(), role="planner", contains="GoalSpec:")
     h.mock.add_canned_sequence(
@@ -205,7 +209,7 @@ async def test_two_task_plan_completes(harness: Harness) -> None:
     h.mock.add_canned_sequence(
         [
             step("write_file", {"path": "report.md", "content": "# Report\nModule works.\n"}),
-            finish("report written", artifacts=["report.md"]),
+            finish(report_summary, artifacts=["report.md"]),
         ],
         role="executor",
         contains="Task t2:",
@@ -223,6 +227,7 @@ async def test_two_task_plan_completes(harness: Harness) -> None:
 
     finished = h.notes("run.finished")
     assert finished and finished[-1]["status"] == "done"
+    assert report_summary in finished[-1]["summary"]
     artifact_names = {a["name"] for a in finished[-1]["artifacts"]}
     assert artifact_names == {"hello.py", "report.md"}
     assert h.state.audit.verify().ok
@@ -256,6 +261,179 @@ async def test_failure_retries_with_escalation(harness: Harness) -> None:
     verifies = h.notes("verify.result")
     assert verifies[0]["report"]["verdict"] == "fail"
     assert verifies[-1]["report"]["verdict"] == "pass"
+
+
+async def test_literal_contract_rejects_mismatch_then_finishes_without_model_loop(
+    harness: Harness,
+) -> None:
+    h = harness
+    h.state.config.execution.compact_planning = True
+    h.mock.add_canned_sequence(
+        [
+            step("write_file", {"path": "exact.txt", "content": "wrong"}),
+            finish("claims done", artifacts=["exact.txt"]),
+            step(
+                "write_file", {"path": "exact.txt", "content": "required bytes", "overwrite": True}
+            ),
+        ],
+        role="executor",
+        contains="Task t1:",
+    )
+    run_id = await run_and_wait(h, goal="Write exact.txt containing exactly required bytes")
+    assert run_status(h, run_id) == "done"
+    assert (h.workspace / "exact.txt").read_bytes() == b"required bytes"
+    reviews = h.notes("verify.result")
+    assert reviews[0]["report"]["verdict"] == "fail"
+    assert reviews[-1]["report"]["verdict"] == "pass"
+    assert reviews[-1]["report"]["reviewer"]["method"] == "deterministic"
+
+
+async def test_generated_json_handoff_still_requires_review(harness: Harness) -> None:
+    h = harness
+    h.state.config.execution.compact_planning = True
+    h.mock.add_canned(
+        {
+            "json": {
+                "tasks": [
+                    {
+                        "title": "Calculate",
+                        "instruction": "Compute and save",
+                        "role": "coder",
+                        "output_file": "answer.json",
+                    }
+                ]
+            }
+        },
+        role="planner",
+    )
+    h.mock.add_canned_sequence(
+        [
+            step(
+                "python",
+                {"code": "import json\nopen('answer.json','w').write(json.dumps({'total': 8}))"},
+            ),
+            step(
+                "python",
+                {"code": "import json\nopen('answer.json','w').write(json.dumps({'total': 2*5}))"},
+            ),
+        ],
+        role="executor",
+        contains="Task t1:",
+    )
+    h.mock.add_canned_sequence(
+        [
+            {
+                "json": {
+                    "criteria": [
+                        {
+                            "requirement": "2 times 5",
+                            "evidence": "Observed 8, expected 10",
+                            "status": "incorrect",
+                        }
+                    ],
+                    "all_requirements_covered": True,
+                }
+            },
+            {
+                "json": {
+                    "criteria": [
+                        {
+                            "requirement": "2 times 5",
+                            "evidence": "Observed 10 and recorded execution",
+                            "status": "met",
+                        }
+                    ],
+                    "all_requirements_covered": True,
+                }
+            },
+        ],
+        role="reviewer",
+    )
+    run_id = await run_and_wait(
+        h, goal="Use the Python tool to calculate 2 times 5 and write answer.json."
+    )
+    assert run_status(h, run_id) == "done"
+    reviews = h.notes("verify.result")
+    assert reviews[0]["report"]["verdict"] == "fail"
+    assert reviews[-1]["report"]["verdict"] == "pass"
+    with h.state.db.session() as db:
+        calls = list(db.execute(select(ToolCallRow).where(ToolCallRow.run_id == run_id)).scalars())
+    assert [c.tool for c in calls] == ["python", "python"]
+
+
+async def test_compact_coder_can_read_pdf_and_render_requested_workbook(harness: Harness) -> None:
+    import openpyxl
+    import pymupdf
+
+    h = harness
+    h.state.config.execution.compact_planning = True
+    with pymupdf.open() as document:
+        document.new_page().insert_text((72, 72), "Basic 10; freight 2")
+        document.save(h.workspace / "source.pdf")
+    h.mock.add_canned(
+        {
+            "json": {
+                "tasks": [
+                    {
+                        "title": "Compare",
+                        "instruction": "Read and render",
+                        "role": "coder",
+                        "output_file": "comparison.xlsx",
+                    }
+                ]
+            }
+        },
+        role="planner",
+    )
+    h.mock.add_canned_sequence(
+        [
+            step("read_pages", {"path": "source.pdf", "pages": "1"}),
+            step(
+                "render_document",
+                {
+                    "type": "xlsx",
+                    "schema_id": "data_table",
+                    "out_path": "comparison.xlsx",
+                    "data_json": {
+                        "title": "Comparison",
+                        "sheets": [
+                            {"columns": ["Basic", "Freight", "Total"], "rows": [[10, 2, "=A2+B2"]]}
+                        ],
+                    },
+                },
+            ),
+            finish("Created comparison", artifacts=["comparison.xlsx"]),
+        ],
+        role="executor",
+        contains="Task t1:",
+    )
+    h.mock.add_canned_sequence(
+        [
+            {
+                "json": {
+                    "criteria": [
+                        {
+                            "requirement": "Read and render",
+                            "evidence": "PDF read and numeric workbook rendered",
+                            "status": "met",
+                        }
+                    ],
+                    "all_requirements_covered": True,
+                }
+            }
+        ],
+        role="reviewer",
+    )
+    run_id = await run_and_wait(h, goal="Read page 1 of source.pdf and render comparison.xlsx.")
+    assert run_status(h, run_id) == "done", str(h.notes("verify.result"))
+    with h.state.db.session() as db:
+        calls = list(db.execute(select(ToolCallRow).where(ToolCallRow.run_id == run_id)).scalars())
+    assert [(c.tool, c.status) for c in calls] == [
+        ("read_pages", "done"),
+        ("render_document", "done"),
+    ]
+    sheet = openpyxl.load_workbook(h.workspace / "comparison.xlsx").active
+    assert sheet["A2"].value == 10 and sheet["C2"].value == "=A2+B2"
 
 
 async def test_ladder_reaches_replan(harness: Harness) -> None:
@@ -458,7 +636,7 @@ async def test_ask_mode_waits_for_plan_approval(harness: Harness) -> None:
                     if request_id.startswith("plan:"):
                         approved_plan = True
                         h.state.conductor.resolve_plan_approval(
-                            request_id.removeprefix("plan:"), "once"
+                            run_id, "once", request_id=request_id
                         )
                     else:
                         h.state.tools.broker.resolve(request_id, "always", None)

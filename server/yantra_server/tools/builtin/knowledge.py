@@ -11,6 +11,20 @@ from pydantic import BaseModel, Field
 from yantra_server.tools.base import Tool, ToolContext, ToolResult
 
 
+def _scoped_collections(ctx: ToolContext, requested: list[str]) -> list[str]:
+    if ctx.state.config.knowledge.auto_index_workspace:
+        from yantra_server.workbench import collection_for
+
+        return [collection_for(ctx.workspace)]
+    return requested
+
+
+def _path_allowed(ctx: ToolContext, path: str | None) -> bool:
+    if not ctx.state.config.knowledge.auto_index_workspace:
+        return True
+    return bool(path and Path(path).resolve().is_relative_to(ctx.workspace.resolve()))
+
+
 class SearchKnowledgeArgs(BaseModel):
     query: str
     collections: list[str] = Field(
@@ -37,11 +51,13 @@ class SearchKnowledgeTool(Tool):
         filters = {"doc_type": args.doc_type} if args.doc_type else None
         hits = await knowledge.search(
             args.query,
-            collections=args.collections or None,
+            collections=_scoped_collections(ctx, args.collections),
             k=args.k,
             mode=args.mode,
             filters=filters,
         )
+        if ctx.state.config.knowledge.auto_index_workspace:
+            hits = [h for h in hits if _path_allowed(ctx, h.path)]
         if not hits:
             return ToolResult(summary="0 results", content="(no matching chunks)", data={"hits": 0})
         # Injection defence (SPEC §16.1): screen retrieved content; drop exfiltration attempts,
@@ -72,10 +88,10 @@ class SearchKnowledgeTool(Tool):
                 lines.append(
                     header
                     + " [instruction-like content — treated as data]\n"
-                    + wrap_untrusted(hit.snippet)
+                    + wrap_untrusted(hit.text[:2400])
                 )
             else:
-                lines.append(f"{header}\n  {hit.snippet}")
+                lines.append(f"{header}\n" + wrap_untrusted(hit.text[:2400]))
         if dropped:
             lines.append(f"[{dropped} chunk(s) dropped: exfiltration attempt in content]")
         top = hits[0]
@@ -112,6 +128,8 @@ class GetChunkTool(Tool):
         chunk = knowledge.get_chunk(args.chunk_id, expand=args.expand)
         if chunk is None:
             return ToolResult.fail(f"no such chunk: {args.chunk_id}")
+        if not _path_allowed(ctx, chunk.get("path")):
+            return ToolResult.fail("chunk belongs to another workspace")
         return ToolResult(
             summary=f"{chunk['title']} p.{chunk['page']}",
             content=chunk["text"],
@@ -138,13 +156,15 @@ class FindDocumentsTool(Tool):
             return ToolResult.fail("no knowledge plane available")
         hits = await knowledge.search(
             args.query,
-            collections=args.collections or None,
+            collections=_scoped_collections(ctx, args.collections),
             k=args.k * 3,
             mode="hybrid",
             filters={"doc_type": args.doc_type} if args.doc_type else None,
         )
         seen: dict[str, Any] = {}
         for hit in hits:
+            if not _path_allowed(ctx, hit.path):
+                continue
             if hit.document_id not in seen:
                 seen[hit.document_id] = hit
             if len(seen) >= args.k:
@@ -174,7 +194,7 @@ class CiteTool(Tool):
         citations = []
         for chunk_id in args.chunk_ids:
             chunk = knowledge.get_chunk(chunk_id)
-            if chunk:
+            if chunk and _path_allowed(ctx, chunk.get("path")):
                 page = f" p.{chunk['page']}" if chunk["page"] else ""
                 citations.append(f"[[c:{chunk_id}]] {chunk['title']}{page}")
         return ToolResult(
@@ -195,6 +215,9 @@ class ListCollectionsTool(Tool):
         if knowledge is None:
             return ToolResult(summary="no collections", content="(knowledge plane not active)")
         cols = knowledge.list_collections()
+        if ctx.state.config.knowledge.auto_index_workspace:
+            allowed = _scoped_collections(ctx, [])
+            cols = [c for c in cols if c["name"] in allowed]
         lines = [f"- {c['name']}: {c['documents']} docs, {c['chunks']} chunks" for c in cols]
         return ToolResult(
             summary=f"{len(cols)} collection(s)",
@@ -215,24 +238,61 @@ class ReadPagesTool(Tool):
     side_effects = "read"
 
     async def run(self, args: ReadPagesArgs, ctx: ToolContext) -> ToolResult:
+        import asyncio
+
         from yantra_server.knowledge.ingest.parse import parse_document
 
         path = ctx.resolve_path(args.path)
         if not path.is_file():
             return ToolResult.fail(f"no such file: {args.path}")
         wanted = _parse_range(args.pages)
-        doc = parse_document(Path(path))
+        if not wanted or len(wanted) > 500:
+            return ToolResult.fail("Select between 1 and 500 positive page numbers")
+        doc = await asyncio.to_thread(parse_document, Path(path))
+        total = len(doc.pages)
+        if any(page < 1 or page > total for page in wanted):
+            return ToolResult.fail(f"Requested page outside document range 1-{total}")
+        doc.pages = [page for page in doc.pages if page.page_no in wanted]
+        missing = [
+            page.page_no for page in doc.pages if any(b.meta.get("needs_ocr") for b in page.blocks)
+        ]
+        if missing:
+            from yantra_server.knowledge.ingest.ocr import complete_ocr
+            from yantra_server.vision.ocr import OCREngine
+
+            config = ctx.state.config.knowledge
+            if not config.local_ocr:
+                return ToolResult.fail(f"Pages {missing} need OCR but local OCR is disabled")
+            try:
+                doc = await asyncio.to_thread(
+                    complete_ocr, doc, Path(path), OCREngine(), config.max_ocr_pages
+                )
+            except Exception as exc:
+                return ToolResult.fail(f"OCR coverage incomplete: {exc}")
         parts = []
+        empty_pages = []
         for page in doc.pages:
             if page.page_no in wanted:
                 text = "\n".join(b.text for b in page.blocks if b.text.strip())
-                parts.append(f"--- page {page.page_no} ---\n{text}")
+                if text.strip():
+                    parts.append(f"--- page {page.page_no} ---\n{text}")
+                else:
+                    empty_pages.append(page.page_no)
+        if empty_pages:
+            return ToolResult.fail(
+                f"No extracted text on requested pages {empty_pages}; coverage incomplete"
+            )
         if not parts:
             return ToolResult.fail(f"no text on pages {args.pages} (of {len(doc.pages)})")
         return ToolResult(
             summary=f"{len(parts)} page(s) from {args.path}",
-            content="\n\n".join(parts),
-            data={"pages": sorted(wanted)},
+            content=(
+                "OCR transcription: visually verify ambiguous identifiers and readings.\n\n"
+                if missing
+                else ""
+            )
+            + "\n\n".join(parts),
+            data={"pages": sorted(wanted), "ocr_pages": doc.meta.get("ocr_pages", [])},
         )
 
 
@@ -243,9 +303,18 @@ def _parse_range(spec: str) -> set[int]:
         if "-" in part:
             lo, _, hi = part.partition("-")
             if lo.isdigit() and hi.isdigit():
-                pages.update(range(int(lo), int(hi) + 1))
+                start, end = int(lo), int(hi)
+                if start < 1 or end < start or end - start >= 500:
+                    return set()
+                pages.update(range(start, end + 1))
+            else:
+                return set()
         elif part.isdigit():
             pages.add(int(part))
+        else:
+            return set()
+        if len(pages) > 500 or 0 in pages:
+            return set()
     return pages
 
 

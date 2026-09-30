@@ -17,12 +17,16 @@ import traceback
 from datetime import UTC, datetime
 from typing import Any
 
-DEFAULT_ALLOWLIST = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+DEFAULT_ALLOWLIST = ["127.0.0.0/8", "::1/128"]
 ALLOWED_NAMES_DEFAULT = {"localhost", "localhost.localdomain", "ip6-localhost"}
 
 
 class SealViolation(OSError):
     """An outbound connection attempt outside the seal allowlist."""
+
+
+class SealDNSViolation(socket.gaierror):
+    """DNS denial specifically caused by the application guard."""
 
 
 class _GuardState:
@@ -133,6 +137,8 @@ def install(
     _state.originals["connect_ex"] = socket.socket.connect_ex
     _state.originals["sendto"] = socket.socket.sendto
     _state.originals["getaddrinfo"] = socket.getaddrinfo
+    _state.originals["gethostbyname"] = socket.gethostbyname
+    _state.originals["gethostbyname_ex"] = socket.gethostbyname_ex
 
     def guarded_connect(self: socket.socket, address: Any) -> Any:
         _check_address(address, operation="connect")
@@ -151,7 +157,7 @@ def install(
         name = str(host) if host is not None else ""
         if name and _ip_allowed(name) is None and name not in _state.allowed_names:
             _report("blocked_dns", name, int(port) if isinstance(port, int) else None)
-            raise socket.gaierror(socket.EAI_NONAME, f"sealed: DNS for {name!r} refused")
+            raise SealDNSViolation(socket.EAI_NONAME, f"sealed: DNS for {name!r} refused")
         results = _state.originals["getaddrinfo"](host, port, *args, **kwargs)
         for family, _type, _proto, _canon, sockaddr in results:
             if (
@@ -159,7 +165,7 @@ def install(
                 and _ip_allowed(str(sockaddr[0])) is False
             ):
                 _report("blocked_dns", f"{name}→{sockaddr[0]}", None)
-                raise socket.gaierror(
+                raise SealDNSViolation(
                     socket.EAI_NONAME, f"sealed: {name!r} resolves outside the allowlist"
                 )
         return results
@@ -168,6 +174,17 @@ def install(
     socket.socket.connect_ex = guarded_connect_ex  # type: ignore[assignment]
     socket.socket.sendto = guarded_sendto  # type: ignore[assignment]
     socket.getaddrinfo = guarded_getaddrinfo
+
+    def guarded_gethostbyname(host: str) -> str:
+        results = guarded_getaddrinfo(host, None, socket.AF_INET)
+        return str(results[0][4][0])
+
+    def guarded_gethostbyname_ex(host: str) -> tuple[str, list[str], list[str]]:
+        results = guarded_getaddrinfo(host, None, socket.AF_INET)
+        return host, [], sorted({str(row[4][0]) for row in results})
+
+    socket.gethostbyname = guarded_gethostbyname
+    socket.gethostbyname_ex = guarded_gethostbyname_ex
 
     try:  # TLS handshake logging (belt and braces; connect is already guarded)
         import ssl
@@ -193,6 +210,8 @@ def uninstall() -> None:
     socket.socket.connect_ex = _state.originals["connect_ex"]  # type: ignore[method-assign]
     socket.socket.sendto = _state.originals["sendto"]  # type: ignore[method-assign]
     socket.getaddrinfo = _state.originals["getaddrinfo"]
+    socket.gethostbyname = _state.originals["gethostbyname"]
+    socket.gethostbyname_ex = _state.originals["gethostbyname_ex"]
     if "wrap_socket" in _state.originals:
         import ssl
 
@@ -225,12 +244,15 @@ def self_test() -> dict[str, Any]:
         results["connect_blocked"] = False
     except SealViolation:
         results["connect_blocked"] = True
-    except OSError as exc:  # no route etc. still counts as sealed at a lower layer
-        results["connect_blocked"] = True
+    except OSError as exc:
+        results["connect_blocked"] = False
         results["connect_note"] = f"{type(exc).__name__}: {exc}"
     try:
         socket.getaddrinfo("example.com", 443)
         results["dns_blocked"] = False
-    except socket.gaierror:
+    except SealDNSViolation:
         results["dns_blocked"] = True
+    except OSError as exc:
+        results["dns_blocked"] = False
+        results["dns_note"] = f"{type(exc).__name__}: {exc}"
     return results

@@ -8,6 +8,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,23 @@ class RenderService:
     ) -> Path:
         obj = self.validate(schema_id, data)
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        if out_path.suffix.lower() != f".{doc_type}":
+            raise RenderError("Output extension must match the requested document type")
+        if doc_type == "pptx" and schema_id != "presentation":
+            raise RenderError("PPTX output requires the presentation schema")
+        # Render in isolation so a failed conversion cannot truncate an existing
+        # deliverable or overwrite a neighbouring user-authored DOCX during PDF export.
+        with tempfile.TemporaryDirectory(prefix=".blackbox-render-", dir=out_path.parent) as folder:
+            staged = Path(folder) / out_path.name
+            self._render_validated(doc_type, schema_id, obj, staged)
+            self._write_provenance(staged, schema_id, template_id, provenance or {})
+            staged.replace(out_path)
+            staged.with_suffix(staged.suffix + ".provenance.json").replace(
+                out_path.with_suffix(out_path.suffix + ".provenance.json")
+            )
+        return out_path
+
+    def _render_validated(self, doc_type: str, schema_id: str, obj: Any, out_path: Path) -> None:
         if doc_type == "docx":
             self._render_docx(schema_id, obj, out_path)
         elif doc_type == "xlsx":
@@ -63,8 +81,6 @@ class RenderService:
             self._render_pdf(schema_id, obj, out_path)
         else:
             raise RenderError(f"unsupported deliverable type {doc_type!r}")
-        self._write_provenance(out_path, schema_id, template_id, provenance or {})
-        return out_path
 
     def _write_provenance(
         self, out_path: Path, schema_id: str, template_id: str, provenance: dict[str, Any]
@@ -236,6 +252,7 @@ class RenderService:
 
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
+        evidence_sheet = None
         if schema_id in ("equipment_list", "instrument_index", "line_list"):
             for name, rows in [
                 ("Equipment", obj.equipment),
@@ -247,11 +264,44 @@ class RenderService:
                 self._xlsx_sheet(wb, name, rows)
         elif schema_id == "data_table":
             for i, sheet in enumerate(obj.sheets, 1):
-                ws = wb.create_sheet(sheet.caption[:28] or f"Sheet{i}")
-                ws.append(sheet.columns)
-                for row in sheet.rows:
-                    ws.append(row)
+                import re
+
+                title = re.sub(r"[\\/*?:\[\]]", "-", sheet.caption).strip("'")[:31]
+                ws = wb.create_sheet(title or f"Sheet{i}")
+                from openpyxl.comments import Comment
+
+                from .column_formulas import compile_row_expression
+
+                ws.append([*sheet.columns, *[c.name for c in sheet.computed_columns]])
+                for number, row in enumerate(sheet.rows, 2):
+                    cells = list(row)
+                    available = list(sheet.columns)
+                    for computed in sheet.computed_columns:
+                        cells.append(compile_row_expression(computed.expression, available, number))
+                        available.append(computed.name)
+                    ws.append(cells)
+                    if sheet.literal_inputs:
+                        for column, value in enumerate(row, 1):
+                            if isinstance(value, str):
+                                ws.cell(number, column).data_type = "s"
+                for column, computed in enumerate(sheet.computed_columns, len(sheet.columns) + 1):
+                    ws.cell(1, column).comment = Comment(
+                        "Row rule: "
+                        + computed.expression
+                        + "\nColumn names are bound by the renderer; source meaning still requires review.",
+                        "BlackBox",
+                    )
                 ws.freeze_panes = "A2"
+            if obj.summary or any(obj.appendix.model_dump().values()):
+                ws = wb.create_sheet("Decision and evidence")
+                evidence_sheet = ws
+                ws.append(["Section", "Detail"])
+                ws.append(["Title", obj.title])
+                if obj.summary:
+                    ws.append(["Decision", obj.summary])
+                for label, values in obj.appendix.model_dump().items():
+                    for value in values:
+                        ws.append([label.replace("_", " ").title(), value])
         else:
             ws = wb.create_sheet("Data")
             ws.append(["field", "value"])
@@ -261,6 +311,50 @@ class RenderService:
                 )
         if not wb.sheetnames:
             wb.create_sheet("Empty")
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        from openpyxl.workbook.properties import CalcProperties
+
+        from .workbook_checks import check_workbook
+
+        for ws in wb:
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+            ws.sheet_view.showGridLines = False
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+            ws.page_setup.orientation = "landscape"
+            ws.page_setup.paperSize = ws.PAPERSIZE_A4
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = 0
+            ws.print_title_rows = "1:1"
+            ws.row_dimensions[1].height = 36
+            for cell in ws[1]:
+                # Headers are labels, including source text beginning with '='.
+                cell.data_type = "s"
+                cell.fill = PatternFill("solid", fgColor="16324F")
+                cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+                cell.alignment = Alignment(wrap_text=True, vertical="center")
+            for row in ws.iter_rows(min_row=2):
+                height = 20
+                for cell in row:
+                    cell.font = Font(name="Calibri", size=11, color="16324F")
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
+                    if ws is evidence_sheet:
+                        cell.data_type = "s"
+                    if cell.row % 2 == 0:
+                        cell.fill = PatternFill("solid", fgColor="EDF3F8")
+                    if cell.data_type == "n" and isinstance(cell.value, (int, float)):
+                        cell.number_format = '#,##0.00;[Red](#,##0.00);"-"'
+                    height = max(height, min(120, 15 * (1 + len(str(cell.value or "")) // 45)))
+                ws.row_dimensions[row[0].row].height = height
+            for column in range(1, ws.max_column + 1):
+                width = max(
+                    len(str(ws.cell(row, column).value or ""))
+                    for row in range(1, min(ws.max_row, 200) + 1)
+                )
+                ws.column_dimensions[get_column_letter(column)].width = min(54, max(16, width + 3))
+        check_workbook(wb)
+        wb.calculation = CalcProperties(fullCalcOnLoad=True, forceFullCalc=True)
         wb.save(str(out_path))
 
     def _xlsx_sheet(self, wb: Any, name: str, rows: list[dict[str, Any]]) -> None:
@@ -268,7 +362,7 @@ class RenderService:
         if not rows:
             ws.append([name])
             return
-        columns = list({key for row in rows for key in row})
+        columns = list(dict.fromkeys(key for row in rows for key in row))
         ws.append(columns)
         for row in rows:
             ws.append([str(row.get(col, "")) for col in columns])
@@ -315,8 +409,21 @@ class RenderService:
             for section in getattr(obj, "sections", []):
                 lines += [f"## {section.heading}", *section.paragraphs, ""]
                 lines += [f"- {b}" for b in section.bullets]
+                for table in section.tables:
+
+                    def safe_cell(value: str) -> str:
+                        return value.replace("|", "\\|").replace("\n", " ")
+
+                    lines += ["", "| " + " | ".join(map(safe_cell, table.columns)) + " |"]
+                    lines += ["| " + " | ".join("---" for _ in table.columns) + " |"]
+                    lines += ["| " + " | ".join(map(safe_cell, row)) + " |" for row in table.rows]
+                    if table.caption:
+                        lines += [table.caption]
+                    lines += [""]
             for i, finding in enumerate(getattr(obj, "findings", []), 1):
                 lines.append(f"{i}. **[{finding.severity}]** {finding.statement}")
+                if finding.evidence:
+                    lines.append(f"Evidence: {finding.evidence}")
             for rec in getattr(obj, "recommendations", []):
                 lines.append(f"- [{rec.priority}] {rec.text}")
         elif schema_id == "work_order_draft":
@@ -347,6 +454,10 @@ class RenderService:
         appendix = getattr(obj, "appendix", None)
         if appendix and appendix.citations:
             lines += ["", "## Sources", *[f"- {c}" for c in appendix.citations]]
+        if appendix and appendix.assumptions:
+            lines += ["", "## Assumptions", *[f"- {c}" for c in appendix.assumptions]]
+        if appendix and appendix.unverified_claims:
+            lines += ["", "## Unverified claims", *[f"- {c}" for c in appendix.unverified_claims]]
         return "\n".join(lines)
 
     def _render_pdf(self, schema_id: str, obj: Any, out_path: Path) -> None:
@@ -390,9 +501,9 @@ class RenderService:
             if not line.strip():
                 story.append(Spacer(1, 6))
             elif line.startswith("# "):
-                story.append(Paragraph(line[2:], styles["Title"]))
+                story.append(Paragraph(_escape(line[2:]), styles["Title"]))
             elif line.startswith("## "):
-                story.append(Paragraph(line[3:], styles["Heading2"]))
+                story.append(Paragraph(_escape(line[3:]), styles["Heading2"]))
             else:
                 story.append(Paragraph(_escape(line), styles["BodyText"]))
         SimpleDocTemplate(str(out_path), pagesize=A4).build(story)

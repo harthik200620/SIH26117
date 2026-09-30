@@ -22,7 +22,7 @@ mkdir -p "$STAGE"
 
 # 1. Python wheelhouse (server + serving extras + their transitive closure).
 echo "-- wheelhouse"
-python -m pip wheel --wheel-dir "$STAGE/wheelhouse" ".[knowledge,vision,render]" >/dev/null
+python -m pip wheel --wheel-dir "$STAGE/wheelhouse" ".[knowledge,vision,render,analysis,ocr]" >/dev/null
 
 # 2. Docker images: server (built here) + the third-party images this profile needs.
 if [ "${YANTRA_SKIP_IMAGES:-0}" != "1" ]; then

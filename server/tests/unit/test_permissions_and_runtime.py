@@ -103,12 +103,12 @@ async def test_ask_flow_once_and_always(state: AppState, tmp_path: Path) -> None
     assert result.ok, result.error
     assert published and published[0]["tool"] == "write_file"
 
-    # "always this session": the second write must not prompt again
+    # A reusable grant is scoped to the exact operation, not every file this tool can write.
     published.clear()
     result2 = await state.tools.runtime.execute(
         "write_file", {"path": "r2.txt", "content": "hi"}, ctx
     )
-    assert result2.ok and not published
+    assert result2.ok and published
 
 
 async def test_deny_flow_logged(state: AppState, tmp_path: Path) -> None:
@@ -128,6 +128,57 @@ async def test_deny_flow_logged(state: AppState, tmp_path: Path) -> None:
         logs = list(s.execute(select(PermissionLogRow)).scalars())
     assert any(log.decision == "deny" and log.decided_by == "user" for log in logs)
     assert state.audit.verify().ok
+
+
+async def test_pending_permission_is_bound_to_run_and_cleared(state: AppState) -> None:
+    broker = state.tools.broker
+    broker.policy = PermissionPolicy([])
+    tool = get_tool(state, "write_file")
+    task = asyncio.create_task(
+        broker.check(
+            tool,
+            {"path": "report.md", "content": "draft"},
+            mode="auto",
+            run_id="run-a",
+            task_id="t1",
+        )
+    )
+    try:
+        await asyncio.sleep(0)
+        pending = broker.pending_for_run("run-a")
+        assert len(pending) == 1
+        assert broker.pending_for_run("run-b") == []
+        request_id = pending[0]["request_id"]
+        assert not broker.resolve(request_id, "once", run_id="run-b")
+        assert not broker.resolve(request_id, "invalid", run_id="run-a")
+        assert not task.done()
+        assert broker.resolve(request_id, "once", run_id="run-a")
+        allowed, _ = await task
+        assert allowed
+        assert broker.pending_for_run("run-a") == []
+        assert not broker.resolve(request_id, "once", run_id="run-a")
+    finally:
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+
+async def test_cancelled_permission_cannot_be_reused(state: AppState) -> None:
+    broker = state.tools.broker
+    broker.policy = PermissionPolicy([])
+    task = asyncio.create_task(
+        broker.check(
+            get_tool(state, "write_file"), {"path": "x"}, mode="auto", run_id="run-a", task_id="t1"
+        )
+    )
+    await asyncio.sleep(0)
+    request_id = broker.pending_for_run("run-a")[0]["request_id"]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert broker.pending_for_run("run-a") == []
+    assert not broker.resolve(request_id, "once", run_id="run-a")
 
 
 # ------------------------------------------------------------------ runtime behaviours

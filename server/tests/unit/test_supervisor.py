@@ -92,7 +92,7 @@ def test_llamacpp_command_construction(tmp_path: Path) -> None:
     cmd = supervisor.command_for(supervisor.processes[0])
     assert cmd is not None
     text = " ".join(cmd)
-    assert cmd[0] == "llama-server"
+    assert Path(cmd[0]).stem == "llama-server"
     assert "--alias tiny-gguf" in text
     assert "-t 6" in text
     assert "--embedding" in text

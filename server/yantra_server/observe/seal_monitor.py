@@ -127,16 +127,11 @@ class SealMonitor:
         from yantra_server.seal.env import assert_environment_locked
         from yantra_server.seal.socket_guard import is_installed
 
-        bundle_manifest = self.assets_dir / "bundle" / "MANIFEST.sha256"
-        compose = self.assets_dir / "docker-compose.yml"
-        compose_internal = False
-        if compose.is_file():
-            compose_internal = "internal: true" in compose.read_text(encoding="utf-8")
         return {
-            "bundle_verified": bundle_manifest.is_file(),
+            "bundle_verified": False,
             "env_locked": not assert_environment_locked(),
             "socket_guard_active": is_installed(),
-            "compose_internal": compose_internal,
+            "compose_internal": False,
             "nftables_present": self._nftables_present(),
         }
 

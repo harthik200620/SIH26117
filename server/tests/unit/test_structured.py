@@ -58,7 +58,18 @@ def test_action_schema_oneof_tools_plus_finish() -> None:
     branches = schema["properties"]["action"]["oneOf"]
     consts = [b["properties"]["tool"]["const"] for b in branches]
     assert consts == ["read_file", "grep", "finish"]
-    assert schema["properties"]["thought"]["maxLength"] == 400
+    # Explanations are truncated by the executor; tool argument validation is strict.
+    import json
+
+    constraint = Constraint(kind="json_schema", json_schema=schema)
+    action = {
+        "thought": "Read the source evidence. " * 30,
+        "action": {"tool": "read_file", "args": {"path": "source.pdf"}},
+    }
+    assert validate_output(json.dumps(action), constraint)["action"]["tool"] == "read_file"
+    action["action"]["tool"] = "not_allowed"
+    with pytest.raises(MalformedOutput):
+        validate_output(json.dumps(action), constraint)
     import jsonschema
 
     jsonschema.validate(

@@ -47,6 +47,9 @@ def test_docker_command_shape(tmp_path: Path) -> None:
     assert "--network none" in text
     assert "--read-only" in text
     assert "--cap-drop ALL" in text
+    assert "--pull=never" in cmd
+    assert "--user" in cmd
+    assert cmd[cmd.index("--user") + 1] != "0:0"
     assert "--pids-limit 100" in text
     assert "--memory 2048m" in text
     assert f"{tmp_path.resolve()}:/work" in text
@@ -64,6 +67,16 @@ async def test_local_sandbox_timeout_kills(tmp_path: Path) -> None:
     sandbox = LocalSandbox(tmp_path, SandboxLimits(timeout_s=2))
     result = await sandbox.run([sys.executable, "-c", "import time; time.sleep(60)"], timeout_s=1.5)
     assert result.timed_out
+
+
+async def test_timeout_still_applies_after_child_closes_output(tmp_path: Path) -> None:
+    sandbox = LocalSandbox(tmp_path, SandboxLimits(timeout_s=1))
+    result = await sandbox.run(
+        [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(60)"],
+        timeout_s=0.5,
+    )
+    assert result.timed_out
+    assert result.wall_s < 10
 
 
 async def test_files_changed_detected(tmp_path: Path) -> None:

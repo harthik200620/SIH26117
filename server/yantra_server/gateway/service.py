@@ -116,10 +116,18 @@ class Gateway:
         self.response_cache = ResponseCache(db, ttl_s=config.gateway.cache_ttl_s)
         self.embedding_cache = EmbeddingCache(db)
         self.gate = PriorityGate(max_concurrent)
+        self.run_models: dict[str, str] = {}
+        self.run_budgets: dict[str, BudgetTracker] = {}
 
     # ----------------------------------------------------------------- chat
 
     async def chat(self, request: ModelRequest) -> GatewayResult:
+        if request.budget is None:
+            request.budget = self.run_budgets.get(current_run_context().run_id or "")
+        if request.budget is not None:
+            request.budget.check()
+        if request.force_model is None and request.role not in {"embed", "rerank", "vision", "ocr"}:
+            request.force_model = self.run_models.get(current_run_context().run_id or "")
         constraint = request.constraint
         if constraint is None and request.schema_model is not None:
             constraint = constraint_for(request.schema_model)
@@ -140,6 +148,10 @@ class Gateway:
         with span("llm.call", kind="llm.call", role=request.role) as sp:
             if request.force_model is not None:
                 manifest = self.router.registry.get(request.force_model)
+                if manifest is None or (manifest.engine != "mock" and manifest.params_b >= 120):
+                    raise EngineError("Selected model is missing or exceeds the parameter cap")
+                if need.needs_vision and "vision" not in manifest.capabilities:
+                    raise EngineError("Selected model does not support images")
                 forced_effort = (
                     request.decoding.reasoning_effort if request.decoding else None
                 ) or "low"
@@ -207,10 +219,6 @@ class Gateway:
             finally:
                 self.gate.release()
 
-            if request.budget is not None:
-                request.budget.add_tokens(
-                    result.usage.prompt_tokens + result.usage.completion_tokens
-                )
             if cache_key is not None:
                 self.response_cache.put(cache_key, decision.model, result)
             output_artifact = self.artifacts.put_text(
@@ -245,6 +253,8 @@ class Gateway:
             try:
                 engine = await self.supervisor.engine_for_model(engine_request.model)
                 result = await self._run_stream(engine, engine_request, request.on_delta)
+                if request.budget is not None:
+                    request.budget.add_usage(result.usage.prompt_tokens, result.usage.completion_tokens)
                 if constraint is not None:
                     try:
                         validate_output(result.content, constraint, None)
@@ -333,8 +343,12 @@ class Gateway:
             sp.set("count", len(texts))
             sp.set("cache_hits", len(hits))
             if missing:
-                engine = await self.supervisor.engine_for_model(decision.model)
-                fresh = await engine.embed(decision.model, [texts[i] for i in missing], instruction)
+                await self.gate.acquire(1)
+                try:
+                    engine = await self.supervisor.engine_for_model(decision.model)
+                    fresh = await engine.embed(decision.model, [texts[i] for i in missing], instruction)
+                finally:
+                    self.gate.release()
                 normalized = self.embedding_cache.put_many(
                     decision.model, [(keyed[i], v) for i, v in zip(missing, fresh, strict=True)]
                 )
@@ -350,8 +364,12 @@ class Gateway:
         decision = self.router.route(RouteNeed(role=role))
         with span("llm.rerank", kind="llm.call", role=role, model=decision.model) as sp:
             sp.set("count", len(documents))
-            engine = await self.supervisor.engine_for_model(decision.model)
-            return await engine.rerank(decision.model, query, documents)
+            await self.gate.acquire(1)
+            try:
+                engine = await self.supervisor.engine_for_model(decision.model)
+                return await engine.rerank(decision.model, query, documents)
+            finally:
+                self.gate.release()
 
     # ----------------------------------------------------------------- helpers
 

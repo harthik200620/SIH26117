@@ -100,6 +100,70 @@ async def test_incremental_reingest_skips_unchanged(
     assert second.skipped == first.documents
 
 
+async def test_lexical_reindex_removes_stale_content(
+    knowledge_state: AppState, tmp_path: Path
+) -> None:
+    knowledge_state.config.knowledge.lexical_only = True
+    docs = tmp_path / "local-docs"
+    docs.mkdir()
+    source = docs / "pump.md"
+    source.write_text("# Pump\nobsoletebearing has vibration.", encoding="utf-8")
+    service = knowledge_state.knowledge
+    first = await service.ingest_path(docs, "local")
+    assert first.documents == 1 and first.errors == 0
+    assert await service.search("obsoletebearing", collections=["local"])
+    source.write_text("# Pump\nreplacementseal is installed.", encoding="utf-8")
+    changed = await service.ingest_path(docs, "local")
+    assert changed.documents == 1 and changed.errors == 0
+    assert not await service.search("obsoletebearing", collections=["local"])
+    assert await service.search("replacementseal", collections=["local"])
+    source.unlink()
+    await service.ingest_path(docs, "local")
+    assert not await service.search("replacementseal", collections=["local"])
+
+
+async def test_collection_path_traversal_rejected(
+    knowledge_state: AppState, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError):
+        knowledge_state.knowledge.lexical("../../outside")
+
+
+async def test_failed_index_commit_is_reingested_not_skipped(
+    knowledge_state: AppState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import select
+
+    from yantra_server.db.models import DocumentRow
+
+    service = knowledge_state.knowledge
+    service.config.knowledge.lexical_only = True
+    folder = tmp_path / "commit-recovery"
+    folder.mkdir()
+    (folder / "inspection.txt").write_text("uniqueinspectionflag awaiting release", encoding="utf-8")
+    index = service.lexical("recovery")
+    actual_commit = index.commit
+    failures = 0
+
+    def fail_first_commit() -> None:
+        nonlocal failures
+        if not failures:
+            failures += 1
+            raise ValueError("PermissionDenied opening fieldnorm")
+        actual_commit()
+
+    monkeypatch.setattr(index, "commit", fail_first_commit)
+    first = await service.ingest_path(folder, "recovery")
+    assert first.documents == 0 and first.errors == 1
+    with service.db.session() as session:
+        doc = session.execute(select(DocumentRow).where(DocumentRow.path == str(folder / "inspection.txt"))).scalar_one()
+        assert doc.status != "indexed"
+    assert not await service.search("uniqueinspectionflag", collections=["recovery"])
+    second = await service.ingest_path(folder, "recovery")
+    assert second.documents == 1 and second.skipped == 0 and second.errors == 0
+    assert await service.search("uniqueinspectionflag", collections=["recovery"])
+
+
 async def test_doc_type_filter(knowledge_state: AppState, tmp_path: Path) -> None:
     docs_dir, _ = write_corpus(tmp_path)
     await knowledge_state.knowledge.ingest_path(docs_dir, "unit3")

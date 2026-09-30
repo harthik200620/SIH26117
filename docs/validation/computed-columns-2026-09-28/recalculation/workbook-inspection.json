@@ -1,0 +1,27 @@
+{
+  "recordCount": 3,
+  "truncated": false,
+  "metadata": {
+    "revision": "6mxr8e",
+    "target": {
+      "id": "wb/x17cp2",
+      "beforeLines": 0,
+      "afterLines": 0
+    },
+    "kind": {
+      "requested": "workbook,sheet,table",
+      "tokens": [
+        "workbook",
+        "sheet",
+        "table"
+      ]
+    },
+    "include": {
+      "tokens": []
+    },
+    "exclude": {
+      "tokens": []
+    },
+    "notices": []
+  }
+}

@@ -1,0 +1,129 @@
+[
+  {
+    "run_id": "4d3802912869404cb5b20b31e44311d4",
+    "attempt": 1,
+    "checks": [
+      {
+        "check": {
+          "kind": "file_exists",
+          "path": "pump-result.json"
+        },
+        "passed": true,
+        "detail": "pump-result.json: 301 B"
+      },
+      {
+        "check": {
+          "kind": "domain_safety"
+        },
+        "passed": true,
+        "detail": "no unsafe recommendations"
+      },
+      {
+        "check": {
+          "kind": "json_parse",
+          "path": "pump-result.json"
+        },
+        "passed": true,
+        "detail": "Valid JSON"
+      }
+    ],
+    "reviewer": {
+      "score": 65,
+      "failures": [
+        {
+          "what": "hydraulic_kw and shaft_kw values are not derived from original source values and units",
+          "where": "pump-result.json",
+          "why": "The values for hydraulic_kw and shaft_kw are not calculated using the original source values and units as required. The formula should use the flow rate in m³/s, not m³/h, and the head in meters. The values provided are not derived from the original source data."
+        },
+        {
+          "what": "Assumptions are not properly cited or verified",
+          "where": "pump-result.json",
+          "why": "The assumption about water density is cited, but the assumption about pump efficiency is not properly cited or verified. The efficiency value should be derived from the original source data, not assumed."
+        },
+        {
+          "what": "OEM status is not properly formatted",
+          "where": "pump-result.json",
+          "why": "The oem_status field is set to 'OEM limits required; compliance not determined', but this is not a valid format. The correct format is 'OEM limits required; compliance not determined' as specified in the acceptance criteria."
+        },
+        {
+          "what": "Missing citation for the efficiency value",
+          "where": "pump-result.json",
+          "why": "The efficiency value of 0.7 is used but not cited or verified against the original source data. The efficiency should be derived from the original source data, not assumed."
+        },
+        {
+          "what": "Missing citation for the flow rate and head values",
+          "where": "pump-result.json",
+          "why": "The flow rate and head values are used but not cited or verified against the original source data. The flow rate should be in m³/s, not m³/h, and the head should be in meters."
+        }
+      ],
+      "fix_instructions": [
+        "Calculate hydraulic power using the original source values and units: density (1000 kg/m³), gravity (9.81 m/s²), flow (36 m³/h converted to m³/s), and head (22 m)."
+      ],
+      "verdict": "fail"
+    },
+    "verdict": "fail"
+  },
+  {
+    "run_id": "c872d82836044884a1b7c1bab0cd93e7",
+    "attempt": 1,
+    "checks": [
+      {
+        "check": {
+          "kind": "file_exists",
+          "path": "pump-result.json"
+        },
+        "passed": true,
+        "detail": "pump-result.json: 301 B"
+      },
+      {
+        "check": {
+          "kind": "domain_safety"
+        },
+        "passed": true,
+        "detail": "no unsafe recommendations"
+      },
+      {
+        "check": {
+          "kind": "json_parse",
+          "path": "pump-result.json"
+        },
+        "passed": true,
+        "detail": "Valid JSON"
+      }
+    ],
+    "reviewer": {
+      "score": 90,
+      "failures": [],
+      "fix_instructions": [],
+      "verdict": "pass",
+      "criteria": [
+        {
+          "requirement": "Read inspection-P101.md and maintenance-procedure.md",
+          "evidence": "Artifact excerpts include content from both files",
+          "status": "met"
+        },
+        {
+          "requirement": "Use calculate_quantity with original source values and units to compute hydraulic and shaft power",
+          "evidence": "Recorded calculator results show correct use of source values and units",
+          "status": "met"
+        },
+        {
+          "requirement": "Write pump-result.json with keys hydraulic_kw, shaft_kw (numbers), sources (source filenames), assumptions (list), synthetic (true), and oem_status (exactly 'OEM limits required; compliance not determined')",
+          "evidence": "Artifact excerpts show correct JSON structure with all required keys and values",
+          "status": "met"
+        },
+        {
+          "requirement": "Keep the JSON concise",
+          "evidence": "Artifact excerpts show concise JSON with no unnecessary fields",
+          "status": "met"
+        },
+        {
+          "requirement": "Do not invent acceptance limits",
+          "evidence": "Artifact excerpts and recorded calculator results do not include acceptance limits",
+          "status": "met"
+        }
+      ]
+    },
+    "verdict": "pass"
+  }
+]

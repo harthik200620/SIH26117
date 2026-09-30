@@ -1,0 +1,759 @@
+{
+  "created_utc": "2026-09-21T06:07:14.823919+00:00",
+  "base_commit": "7f41c9feed8e320ecd4d0912db881dabec8ac9f3",
+  "working_tree": "uncommitted changes included; base commit alone does not reproduce this state",
+  "files": [
+    {
+      "path": "server/yantra_server/__init__.py",
+      "sha256": "47a83108999ccfbf883d2d590fbc07711b825f634c09749950ee7521a2605b65"
+    },
+    {
+      "path": "server/yantra_server/agents/__init__.py",
+      "sha256": "6eee59f0fc0bc27b9250a398846c57d6a4307ce9b70fdd4f2659d09d38adfa3b"
+    },
+    {
+      "path": "server/yantra_server/agents/loader.py",
+      "sha256": "c495ce4818ff59a060278ead7bddebd19125f90faa4f5cca022aa4f6f8e80cad"
+    },
+    {
+      "path": "server/yantra_server/app.py",
+      "sha256": "32d2043725155a044f4a37afcbe0b4830c9414c80a4975f355cac9762762919c"
+    },
+    {
+      "path": "server/yantra_server/artifacts/__init__.py",
+      "sha256": "123aceb3ad281daf4557e9d9b8441e9eb180c0abf0911eff4e7d3165319b7fff"
+    },
+    {
+      "path": "server/yantra_server/artifacts/store.py",
+      "sha256": "08e00fd6e70c15956f34c657bfde5bb4899d83ead8c7f53ddf798d01e00c08b4"
+    },
+    {
+      "path": "server/yantra_server/cli/__init__.py",
+      "sha256": "987e998d68aa5467cceded0867c7372944409b189c53ab1bc96e9d9782a9f660"
+    },
+    {
+      "path": "server/yantra_server/cli/__main__.py",
+      "sha256": "bfa545e52b04f386d57c5d718615d25a3d29b019dc302536f06c747fdc327e8f"
+    },
+    {
+      "path": "server/yantra_server/cli/eval_cmd.py",
+      "sha256": "181af0c110e21680fd6ff4681ed3c4ca1ca6b860c5ad2b4831d53fd7d4566538"
+    },
+    {
+      "path": "server/yantra_server/cli/index_cmd.py",
+      "sha256": "7635b37e73cb9e8550e1b15848ea36deca802354b62e10117d6414bcea919dc8"
+    },
+    {
+      "path": "server/yantra_server/cli/main.py",
+      "sha256": "d20842046c356f2818edb29c5debe0a78aa0031be99fbdd7b8b0f42213a59011"
+    },
+    {
+      "path": "server/yantra_server/cli/models_cmd.py",
+      "sha256": "c3340b77be4d1072a469628542ece1109ad7bff405f0e626be2f1910c649acc4"
+    },
+    {
+      "path": "server/yantra_server/cli/run_cmd.py",
+      "sha256": "f8c610156dba0ea368570b5b83381dce07796fa89c0b2be59313b23cea735ddc"
+    },
+    {
+      "path": "server/yantra_server/cli/seal_cmd.py",
+      "sha256": "02f75f5aa7b2a1448f1958d93d854cc28ae3fb36b01fd27f8e8008e7082c0273"
+    },
+    {
+      "path": "server/yantra_server/conductor/__init__.py",
+      "sha256": "18f52393e308fdb24a38d957087b9eeedc6b0b38da883dc456af6defb46108fd"
+    },
+    {
+      "path": "server/yantra_server/conductor/budgets.py",
+      "sha256": "3663b9cabb4ba0d7c74225f364061975da1771ff9a7cce9dca2ffbc913fa7b56"
+    },
+    {
+      "path": "server/yantra_server/conductor/context.py",
+      "sha256": "f2455a24722a28cd847a8a4aa17a3466aa0a69b585ccd24322ae28ee74b18599"
+    },
+    {
+      "path": "server/yantra_server/conductor/executor.py",
+      "sha256": "2bce05fb9691729d22aaf86d9f6ba35adebb9e26a4eba648081eeeac222dba8e"
+    },
+    {
+      "path": "server/yantra_server/conductor/intake.py",
+      "sha256": "993c468149e9d2363b28b2f44422a9ca7c2c0343a80d173d4d50b2b7ba830069"
+    },
+    {
+      "path": "server/yantra_server/conductor/notify.py",
+      "sha256": "726519676907342e862349f7433ebf662cde373736b4c186ea87ef5aa342196f"
+    },
+    {
+      "path": "server/yantra_server/conductor/planner.py",
+      "sha256": "43d1a8814cfa133e3004b0b185e4da7f3fd2358a0a086498ce95841f9447c3f7"
+    },
+    {
+      "path": "server/yantra_server/conductor/scheduler.py",
+      "sha256": "e49554f1edb6cabb06494405d22517fea38e516156a43a234abb8ec3b79caed2"
+    },
+    {
+      "path": "server/yantra_server/conductor/service.py",
+      "sha256": "9663539336a6256bf6bc99b35556e2b0341bccf12173fb0eecf5136df534bc24"
+    },
+    {
+      "path": "server/yantra_server/conductor/types.py",
+      "sha256": "aa5efb865e25dd988cb47631b770e2f313f249120126d90bc8ca682137ef0a71"
+    },
+    {
+      "path": "server/yantra_server/conductor/verifier.py",
+      "sha256": "000df2fc2b76cefe15539dbae1bed1a3d58c556d49abedf1a10a61efcb5d9d16"
+    },
+    {
+      "path": "server/yantra_server/config.py",
+      "sha256": "3d619a343d91cc59faa4e20733ea2ac82d6a130a3fb0f47d9f48d168112b036a"
+    },
+    {
+      "path": "server/yantra_server/db/__init__.py",
+      "sha256": "96f5bf001bdd292f4826d23121b03f6ad242caafd9b86b1291e19f4ecec4b709"
+    },
+    {
+      "path": "server/yantra_server/db/alembic/env.py",
+      "sha256": "fb7e6feb3d512c0661d9c1b8fd7ad19ef5d0202466596c79a3fa7fbdd96c0d46"
+    },
+    {
+      "path": "server/yantra_server/db/alembic/versions/83f0810c8ea0_gateway_caches.py",
+      "sha256": "35932e7c610758909b862040d2b2f7fd7f0369fa87a59ef5bd8b3de39705cb3f"
+    },
+    {
+      "path": "server/yantra_server/db/alembic/versions/9ec23a44877b_steps_task_id_plan_scoped.py",
+      "sha256": "13921d47297035cf2a562ede10df51920968edd2abc092be15a48561b83752d7"
+    },
+    {
+      "path": "server/yantra_server/db/alembic/versions/bb20260921_events.py",
+      "sha256": "1ca2abbd6b348649c2e2d97c07395591fe3a8bb667fc03e3284cc4bfc519a769"
+    },
+    {
+      "path": "server/yantra_server/db/alembic/versions/ceaec9fbadcf_initial_schema.py",
+      "sha256": "083ac4430c4795b44d384cefef0d4644c939dd554a2742e7947b28cabdcb262c"
+    },
+    {
+      "path": "server/yantra_server/db/base.py",
+      "sha256": "deacd7a95f4cdd3fa437c48d82f5f6550462a657bf15afa99f90d7a32ea73595"
+    },
+    {
+      "path": "server/yantra_server/db/migrate.py",
+      "sha256": "4af957f714416931916adc345264ac884d753f7c14a5adf4e165bedace6ee682"
+    },
+    {
+      "path": "server/yantra_server/db/models.py",
+      "sha256": "cd4448d96a87ccad8a6da171074469f359dd2369ef8a0af28481efa78f0a3d80"
+    },
+    {
+      "path": "server/yantra_server/evals/__init__.py",
+      "sha256": "08b91637651a582e906b21ba8a90690c9216679e1feec72c7c32febcc6998dbd"
+    },
+    {
+      "path": "server/yantra_server/evals/runner.py",
+      "sha256": "c2ffd1f75560f4b9090319d537b56d8e793d6fb7b9493fb062344c2e2b8e1f2f"
+    },
+    {
+      "path": "server/yantra_server/evals/scenarios.py",
+      "sha256": "dbfedbb8d448ea5b8fcecc56007f4896cca604e23d18cf9d9bd36314c8b454cd"
+    },
+    {
+      "path": "server/yantra_server/evals/seal_smoke.py",
+      "sha256": "458878778afa884d90515007b3a2724dd601d5a9052f198ffe75f30c1dc6009f"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/latency.yaml",
+      "sha256": "d3a5b1d503eab5245c61c1a192c471efe3b924fbd35bcb61d16c3e728f4b1228"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/pid.yaml",
+      "sha256": "e91f8590febb56d94ba01e7a74807a0c6f471b3976097a2ebdd20d27cc06dcf4"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/resilience.yaml",
+      "sha256": "e82bede77f4f6320e2a44163854c29d79f4d250e6cc63a90fc8f8dd30021c100"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/retrieval.yaml",
+      "sha256": "fd86a7f4483637260f1318a40c5082f0891e0a912321ec1d689425ecb5f095b9"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/seal_smoke.yaml",
+      "sha256": "89e599a4f645f05d84a66c0ab6f33b1557d61bb355699033a36c0fb2e29043bb"
+    },
+    {
+      "path": "server/yantra_server/evals/suites/tasks.yaml",
+      "sha256": "ad5c24c7936db9ec952a6abc6da7be3507f493a8d4cceffe30f81653dccc4c91"
+    },
+    {
+      "path": "server/yantra_server/gateway/__init__.py",
+      "sha256": "3de86f9b3ec42c98e4766b341deb385b1372dd1ecaecdca525fe03f00c88d062"
+    },
+    {
+      "path": "server/yantra_server/gateway/bench.py",
+      "sha256": "58b569dfb096d13d0314881d3c6f582dc509e1d83c64e84950ac4ee0abe9dd74"
+    },
+    {
+      "path": "server/yantra_server/gateway/cache.py",
+      "sha256": "43474a8efebec8714678c07ee7c3457249ecad1ca4708d97f573f50589e01e9d"
+    },
+    {
+      "path": "server/yantra_server/gateway/discovery.py",
+      "sha256": "42ed00bcd41fe589110c9d4c8685bdb5667daf57a12d554ee73b08f91ef592bc"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/__init__.py",
+      "sha256": "cf9485f47315ee4312445cbbe35f4c9347e3cdb62502b03528979f00c3fafd12"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/base.py",
+      "sha256": "878a5924a55dbe53bebaa9c500398d03f227460b250705ee1b771524e2a45ec2"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/llamacpp.py",
+      "sha256": "383f0576e6e2fee7dc2a0c5d7ad78f92b2d4c8008f5dd501ea61f79d2f9d2f59"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/mock.py",
+      "sha256": "09e5f4af27cd1de1d622e0793d294afd5139e507ad5d764d0b5f9a17df524a1a"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/openai_compat.py",
+      "sha256": "f5d22f0551fa34ebd0db352820355a9df0ace73e16b3f2288a03df4b33d855cc"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/pooling.py",
+      "sha256": "6ab14e07dec4b5223c7db5f2066e0e319911d6789537c1a8ad981d89a33507a3"
+    },
+    {
+      "path": "server/yantra_server/gateway/engines/vllm.py",
+      "sha256": "6ab65961b735c1a5174df932315c153e7e5622442b1c5c941eb618bd586ede91"
+    },
+    {
+      "path": "server/yantra_server/gateway/gguf.py",
+      "sha256": "5eaaf764f7d345c6a687c1bae5c2cbc01f59379011a6fe698a6bf8206e15975f"
+    },
+    {
+      "path": "server/yantra_server/gateway/probe.py",
+      "sha256": "92c38fba70918b570aaa17bc399f56c96a87ec308d35e5a138bd744b2ade66f3"
+    },
+    {
+      "path": "server/yantra_server/gateway/profile_spec.py",
+      "sha256": "b43d945732c266cc52e3e0f0171e0b2fab783cad39bc013e609c876baaf59937"
+    },
+    {
+      "path": "server/yantra_server/gateway/registry.py",
+      "sha256": "06724c98890e5aa37eef35a1d11d86a2bea2ea271911d76ef2bbafac6bc8f0f2"
+    },
+    {
+      "path": "server/yantra_server/gateway/router.py",
+      "sha256": "7c7e7923f8a9da356782c05470b3da8631b75284f0a15f86be1b8cd8fc40c363"
+    },
+    {
+      "path": "server/yantra_server/gateway/service.py",
+      "sha256": "6f12bbcf1e502d2eea88f7a9523ebcc39e0e164d38657f4b3985e43e05faa869"
+    },
+    {
+      "path": "server/yantra_server/gateway/structured.py",
+      "sha256": "d6280db97d1e27881329fe9d70f2a6542cea31cffe89557f8c45c57a5800c981"
+    },
+    {
+      "path": "server/yantra_server/gateway/supervisor.py",
+      "sha256": "16c64f0bddf84a369f722c9aab8a935132ac07adf32e72480d8e346cc862c7ee"
+    },
+    {
+      "path": "server/yantra_server/guard/__init__.py",
+      "sha256": "b8b72b05cfcd5a0fd56beb34eff8632235f5c566c21a94ccb12a5ddd6b8cc046"
+    },
+    {
+      "path": "server/yantra_server/guard/domain_safety.py",
+      "sha256": "23a2bc0616a3b684a17d6b6f0272f534da627fda844dce58109f90b42a43869c"
+    },
+    {
+      "path": "server/yantra_server/guard/injection.py",
+      "sha256": "9985f90b19f09138114835e42683c112c581236f16d91041e76bf2ebc9ec4805"
+    },
+    {
+      "path": "server/yantra_server/guard/output_checks.py",
+      "sha256": "2d5e0ef84f20183e30db0558c9a815c11df09397c4299ac1ca60371ec8200bb4"
+    },
+    {
+      "path": "server/yantra_server/guard/pii.py",
+      "sha256": "ff6e9c2f16d836b4c8f93b0d51490adbaaa971918dd3d767d6bf21b9dbcb5a21"
+    },
+    {
+      "path": "server/yantra_server/handlers.py",
+      "sha256": "6c133b9d0bd6d42d01a79b0f609fbf0b0dbacdead202bbbcc6774fc8021d8e79"
+    },
+    {
+      "path": "server/yantra_server/hardware.py",
+      "sha256": "76bc988bdbfdcec2ca509a2b2b9476425430a30da839e0dd13506a2ad3a78b98"
+    },
+    {
+      "path": "server/yantra_server/instance.py",
+      "sha256": "b8411d04028d3ccaa0e5f9f58d22082baae5a69c982e2e7b0df20071bfdac6f6"
+    },
+    {
+      "path": "server/yantra_server/knowledge/__init__.py",
+      "sha256": "ae387058f56b27fb1574e19c6514216d66042adb2247b3bc604abc927dc1892d"
+    },
+    {
+      "path": "server/yantra_server/knowledge/index/__init__.py",
+      "sha256": "1166affc7902e701823960f2677a2d9abadf106cb022abdf404d5aa2bb8728f7"
+    },
+    {
+      "path": "server/yantra_server/knowledge/index/lexical.py",
+      "sha256": "e3717f43acc98160bacc85adc825869cbebb6e4c8c9025664fd24c5fa80b4998"
+    },
+    {
+      "path": "server/yantra_server/knowledge/index/vector.py",
+      "sha256": "8096a7f7c8ef59dc6c7152bbb472b56fe0264eeb752e4f6e3a75b6847a49c11d"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/__init__.py",
+      "sha256": "8c0c3b787bb4118ef1eb4dc328c30934c442d4294d17c4870a91489e9062f47d"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/chunk.py",
+      "sha256": "0ff9954b46116047d9aad0eddf0fedc6222fb824a2b226f59a8d12368a72dfd0"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/classify.py",
+      "sha256": "7cddf81dd67201d513043559e7c3df6956221e81f2d6071242a3d91d516d9c89"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/enrich.py",
+      "sha256": "588923dfdce1fc22661ec415443771fa38c147b5db584a513acafc43185f3267"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/parse.py",
+      "sha256": "0b6e302d3377e51627f441cbee179de92ba456e02bd86025f86d8b82ca77a6a5"
+    },
+    {
+      "path": "server/yantra_server/knowledge/ingest/tags.py",
+      "sha256": "513c444dd7ce56824679a10bd8091afd3826151cf5776d599214a23b90ff7ea0"
+    },
+    {
+      "path": "server/yantra_server/knowledge/retrieve/__init__.py",
+      "sha256": "56b3e1b8c994cd95f2997404697d503dd1888836ec9a79929afb7f9c1c3bb656"
+    },
+    {
+      "path": "server/yantra_server/knowledge/retrieve/evaluate.py",
+      "sha256": "c02ecc8d1ff7857b459f0f3a01775296a0b874ba5c861306c20bab4e66751cbe"
+    },
+    {
+      "path": "server/yantra_server/knowledge/retrieve/fuse.py",
+      "sha256": "3d78ed7b38a7856d9c0d2e1c9cba6c1c3b6dc5b134b3520a479e4286a37b2cd9"
+    },
+    {
+      "path": "server/yantra_server/knowledge/service.py",
+      "sha256": "b2156ffced7961d1e42803deb343a2ae0aea4eb566a639a950007621241f92b7"
+    },
+    {
+      "path": "server/yantra_server/knowledge/types.py",
+      "sha256": "64ef8463050bf89b692e1383ec49000d517da7ad45705ccd6e767b64b419abfe"
+    },
+    {
+      "path": "server/yantra_server/memory/__init__.py",
+      "sha256": "e2f7b15e43198a2e3f83723537e71799b13a9759c8c47b6cc10385d6edc5faa0"
+    },
+    {
+      "path": "server/yantra_server/memory/service.py",
+      "sha256": "5c4a476b7b69c8724b549f309f6c338ed1cedc58ca108f740c9f4e9ab7765ea9"
+    },
+    {
+      "path": "server/yantra_server/observe/__init__.py",
+      "sha256": "47cfb3cdcce324f09ffc9f9d11af85f692d7ce9a616d508c699d57140cf057ff"
+    },
+    {
+      "path": "server/yantra_server/observe/audit_chain.py",
+      "sha256": "86b24817f6376fa747856fd5d0ff524c3a9ce187aa5551310521e4ffde2f4ba6"
+    },
+    {
+      "path": "server/yantra_server/observe/exporter_sqlite.py",
+      "sha256": "695d99c5ba5c79e4c3f74fc2407b8ce2077926133999561c92277a085f51fd64"
+    },
+    {
+      "path": "server/yantra_server/observe/metrics.py",
+      "sha256": "fd2a621364ba4ea2dc81cbd02851c42b1414ba35bb3e9f4b8bea5bfaea9e6971"
+    },
+    {
+      "path": "server/yantra_server/observe/seal_monitor.py",
+      "sha256": "0f1d24985275fb910793abb5241235812c80fc89776291ec06ded45529ab18cc"
+    },
+    {
+      "path": "server/yantra_server/observe/tracing.py",
+      "sha256": "668ea4ec006511ee4642c0560f6120bd7adea4883a1ac7d3431ba9585dc251f4"
+    },
+    {
+      "path": "server/yantra_server/protocol/__init__.py",
+      "sha256": "c0ab591a82e1f2622015964493c7f96a7f70d7de40bb6731b61c1c0ea3b5dd82"
+    },
+    {
+      "path": "server/yantra_server/protocol/export.py",
+      "sha256": "af9c746d956af744d2822c4336b81e8ab33c7a7b4f3a49498ed04cd66c7fcee5"
+    },
+    {
+      "path": "server/yantra_server/protocol/jsonrpc.py",
+      "sha256": "670d5926072d89c1f06b6fd5eb85b8ab9dc6912fff21ae36f85b077a66fe4660"
+    },
+    {
+      "path": "server/yantra_server/protocol/messages.py",
+      "sha256": "021820a2411f7e31c501e229943527f80f66e3d34003a603feee47a15ec5efd1"
+    },
+    {
+      "path": "server/yantra_server/render/__init__.py",
+      "sha256": "a785decb8fa349173c96aaefd637e79571d2859352dafe3a3da675dd9dd902e8"
+    },
+    {
+      "path": "server/yantra_server/render/schemas.py",
+      "sha256": "e654589040a265f1df5289cc71bd8add16be1fdbd48a629381851b08f5625e55"
+    },
+    {
+      "path": "server/yantra_server/render/service.py",
+      "sha256": "1043d1c1b06a78e4c44c98196375224585eba41d70f4d7d22b6635583378936a"
+    },
+    {
+      "path": "server/yantra_server/rpc.py",
+      "sha256": "28805993323304540e189b1e527472876ded20e59999c72792f27eee97cb826d"
+    },
+    {
+      "path": "server/yantra_server/sandbox/__init__.py",
+      "sha256": "6df0460f355d6344d594577364cc8027e9cdde4f9af6ff3cb4cebc82837537de"
+    },
+    {
+      "path": "server/yantra_server/sandbox/_meter.py",
+      "sha256": "7f0a41c9c9fb5b6824afb1216cb9f792285490485aa07679c3b22850d9975d01"
+    },
+    {
+      "path": "server/yantra_server/sandbox/base.py",
+      "sha256": "45e8378d025b16d60ac044d0f35dc992f792305b84d82782a4804466106cf2e3"
+    },
+    {
+      "path": "server/yantra_server/sandbox/bwrap.py",
+      "sha256": "cbc53a9412888e7e9b614b48cd7477d7ea56f87e25833bd7e2eceed90a4ac4bb"
+    },
+    {
+      "path": "server/yantra_server/sandbox/disabled.py",
+      "sha256": "0d9117d7c1ff9f2b38e41bb8a2e45ea85c5bf5e56a419388dda58c0a511774e5"
+    },
+    {
+      "path": "server/yantra_server/sandbox/docker.py",
+      "sha256": "ddd170e6c5708187acfae938870ecb3e28ba96bb2817b3874ea1f0ee0ab4f330"
+    },
+    {
+      "path": "server/yantra_server/sandbox/limits.py",
+      "sha256": "35060fe9746c35b03b2e5bf32173d6afca88b58d307e0d6b658b7ea1983d6440"
+    },
+    {
+      "path": "server/yantra_server/sandbox/local.py",
+      "sha256": "05f7ca6874cf912cf1836635c21efdc62c4ddd2f01b0ea1d3bd12d2d183d3556"
+    },
+    {
+      "path": "server/yantra_server/seal/__init__.py",
+      "sha256": "edc02ce6b773c8511cbdee304a1a76ac61315bf1b2c0512dc3d669e21c57bd59"
+    },
+    {
+      "path": "server/yantra_server/seal/demo.py",
+      "sha256": "9434c245bc6c03feaf9b9a5558a3377205611374e845591254159a26787110fd"
+    },
+    {
+      "path": "server/yantra_server/seal/dns_sink.py",
+      "sha256": "2443430f94f8a69018e3f1663581d0ddb3bb52e6deab945f5585c0c666756586"
+    },
+    {
+      "path": "server/yantra_server/seal/env.py",
+      "sha256": "a0f61d4824162babfe1e84c5ceb06a5c0c4f19517d42e05f4d2fe331c5755b29"
+    },
+    {
+      "path": "server/yantra_server/seal/namespace.py",
+      "sha256": "f49b16bca672677c876f78874267ce9be5d5cb4794fabfe22d3272c6c66091fc"
+    },
+    {
+      "path": "server/yantra_server/seal/socket_guard.py",
+      "sha256": "d019a7f2699276a33466a32102090721ca6d8f4f4795ce77c59fa93199bfe4f6"
+    },
+    {
+      "path": "server/yantra_server/seal/verify.py",
+      "sha256": "334e46a6f314a9c441a2554d3ccbc3d0c5557c77c4fed44dbc45222e635b7632"
+    },
+    {
+      "path": "server/yantra_server/security.py",
+      "sha256": "452d45ca597003d4230eb63da30b4c4b460cd4e17667cc107380d6b18feae2b4"
+    },
+    {
+      "path": "server/yantra_server/state.py",
+      "sha256": "bebc2836fff30df9e1208071ea4f20cf43618005317f556446a32c8c3ad66123"
+    },
+    {
+      "path": "server/yantra_server/static/assets/index-Ba1ZG8cA.css",
+      "sha256": "663dc3ffe515ef812a723a48dfab68ce09895ff64cade496f7eea471e7e796f9"
+    },
+    {
+      "path": "server/yantra_server/tools/__init__.py",
+      "sha256": "ae22d941045171589801e49cc3c2886ba979b1c4a0aff408296c5bb51390af9e"
+    },
+    {
+      "path": "server/yantra_server/tools/base.py",
+      "sha256": "6dfbf166686757be613e90b312ddfadf8a53c45821b8ed7ed9dd19931238df34"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/__init__.py",
+      "sha256": "294a7be1e5456a9738c79f36e4fc919faa9f9a474c0c9d2f16167b069183950f"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/artifact.py",
+      "sha256": "da4a973b0bd47ef71da0ed279e9ff83f7b3e2e2db139d8f23dec6696655d779e"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/calculator.py",
+      "sha256": "97f28f2ebb25c52f6ebc7ced672e61d05ac09ac12c0c353b93cbd325ed03907f"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/execution.py",
+      "sha256": "1796e34608b695c71851b38534bb7f9de0a92c106dd824f36e2a0203a2bdb9a9"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/fs.py",
+      "sha256": "47ede1764ec93be374eb2c4d2791e8adf7a3cdf3cfe6b56f28006a31909a1f5e"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/harness.py",
+      "sha256": "61a0b96b6bb24759e575ccbba2abebc131fe01efd8ec2073fb964a84cc270610"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/knowledge.py",
+      "sha256": "5c5c558b0a74f3765f8f0dcf31432e44e980144d56cd13d141da6c5aee36a210"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/memory.py",
+      "sha256": "29a228271843205f356d3220ddc7f6e9f997e57d7397ef13963949149f9384c5"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/quantities.py",
+      "sha256": "0a8a35a57c7f733e5e9970c6572dda9c3a9a96bdedfaff19b00c738d7a0975ed"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/render.py",
+      "sha256": "bd29609cf3b3815652033a9c6f1b4a34542eb4f22df36a5c00d3eec7af684d8a"
+    },
+    {
+      "path": "server/yantra_server/tools/builtin/vision.py",
+      "sha256": "796feaf24aadca8397c22a84e73c5a6632b19a7ef5fbd1fcff7df5fdf79565fb"
+    },
+    {
+      "path": "server/yantra_server/tools/compaction.py",
+      "sha256": "d3508ff74c3fb5d63ea0514960602ef3972dae6145d788f77577ecfe1c4e762d"
+    },
+    {
+      "path": "server/yantra_server/tools/mcp/__init__.py",
+      "sha256": "8c8fc08f570943ca8e516a9672c2da9e79b4b48bfa99460fb9538de129a889ed"
+    },
+    {
+      "path": "server/yantra_server/tools/mcp/client.py",
+      "sha256": "4e851bdafd26d98f40a16a4656c35d5f9998c07f6b174a229218e57fa4ae4b3e"
+    },
+    {
+      "path": "server/yantra_server/tools/permissions.py",
+      "sha256": "85393fe4ce8187032b2edb3606b24ab19e4e517c76fbf70977ab6368db89f255"
+    },
+    {
+      "path": "server/yantra_server/tools/registry.py",
+      "sha256": "7665d5b0beb2ec53cca7e953093011dae6f0478cfa8d43937367c5622a3cd5fd"
+    },
+    {
+      "path": "server/yantra_server/tools/runtime.py",
+      "sha256": "ad62cb0245996265872f5e4638c8df8c377640c27c14de0a271596f671d2acc1"
+    },
+    {
+      "path": "server/yantra_server/vision/__init__.py",
+      "sha256": "e30f9ce47a82e744ca9ba5b7da5ea19987d219744bd5848a3970f96e061fdd2a"
+    },
+    {
+      "path": "server/yantra_server/vision/ocr.py",
+      "sha256": "7332f85cae23f98fb3d62db5d74fa13f4993b030feb20b2cda47bf3f9a65b07f"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/__init__.py",
+      "sha256": "0806069f7f2e48644193b21b6e0a2f0f2c3a30ebc41ab7eff69495aea6a0feab"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/annotate.py",
+      "sha256": "fbd92673ae1f5460d0a3bf74a8875a2855932e091957f07b8e3d16c2dddcfd9b"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/detect.py",
+      "sha256": "ccaf01b471cf08ede5065b676600abd864eb1ab6e11a8beaeed91bc30b4eadbd"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/graph.py",
+      "sha256": "17a5d5bf5bcd94efb50402fbe13caacf16d50a173b4f8321f1255ed46b804ae4"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/isa51.py",
+      "sha256": "2ccc8f2968c9860b2f84ffc337e237f66eaaf2b0b1977fed29c2c66cc306517d"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/pipeline.py",
+      "sha256": "a4afad4c8203249b1a63690f2b4f8c48d61621a5d92a672034a2c9c83c2c1de7"
+    },
+    {
+      "path": "server/yantra_server/vision/pid/rules.py",
+      "sha256": "a697b2f19a3204cc1305a3c8ba193c87c0d9f0bb0a48d686040a57cd650bdbbf"
+    },
+    {
+      "path": "server/yantra_server/vision/tiling.py",
+      "sha256": "01703c4dadfcee0b44c39e35b15a6fbd17d56e3c4816f8cc05de2b5a763f7ec3"
+    },
+    {
+      "path": "server/yantra_server/workbench.py",
+      "sha256": "c788edde9a3ccb77fa3521c7df16f86f8a06d12d3e938956e319c5ac9c7233fd"
+    },
+    {
+      "path": "scripts/evaluate_workbench.py",
+      "sha256": "2ba82b04ac68e6e24511b0a65e021e5989e46572bad599b24d752f95df1594e3"
+    },
+    {
+      "path": "scripts/export_schemas.py",
+      "sha256": "5b279dda55b4ddc9ad6cb004fda54b4ba67ff400763568efb5456ec5549a2c3e"
+    },
+    {
+      "path": "scripts/fetch_models.py",
+      "sha256": "e00cef1929afb93955851aa0bde5b7704d57deb60c8cb3863681e99ad1495733"
+    },
+    {
+      "path": "scripts/gen_types.py",
+      "sha256": "3cbcd6dec983190ab6d5f1306ac137cb49302d6e7fa5be1a863e66c1cb31ae11"
+    },
+    {
+      "path": "scripts/run_laptop.py",
+      "sha256": "c98f8b5a7ad65cf2d49aa08eedde009e5e03f39b86abf997418f82953fc30951"
+    },
+    {
+      "path": "scripts/run_strict.py",
+      "sha256": "f175e49b3ce348d64489f76d5b8229b6df0ca3df10c0a9a76c1f59389ad5b080"
+    },
+    {
+      "path": "scripts/run_workbench.py",
+      "sha256": "6823d0e9857c2ae5b425c646aa6aef351769cbfe4e12d2bd2d9175ada19e6c26"
+    },
+    {
+      "path": "scripts/setup_laptop.py",
+      "sha256": "d45efdb81084012f7d236681ad4f5e142b6b78fad8587701b0849fd2508639c7"
+    },
+    {
+      "path": "scripts/setup_workbench.py",
+      "sha256": "b8c231473c7e8838a81e4cd38713717b71353b444630191d1362c0473621a16f"
+    },
+    {
+      "path": "scripts/train_pid_detector.py",
+      "sha256": "3cc837f3916cb3b0ce9664c35477a39b59d294dbd35ac66fa9cabd499144427f"
+    },
+    {
+      "path": "scripts/verify_sandbox.py",
+      "sha256": "565fe896e6c01404e87499a1d7510605a55a969deb559502efffcb822191e017"
+    },
+    {
+      "path": "web/src/api.ts",
+      "sha256": "0e620cf254c4b71375bfbb2b8eba97ded1f426b728a94c920edaadef164a2030"
+    },
+    {
+      "path": "web/src/App.tsx",
+      "sha256": "0cd0b2073bd7c327c7f0a0e89f8396da7a506cf46db7d8788a80c3fbbf638c69"
+    },
+    {
+      "path": "web/src/blackbox.css",
+      "sha256": "5803397d857e7815f9b803c95a930310fbf4b8201904994fe8171c2e5293f1f1"
+    },
+    {
+      "path": "web/src/components.tsx",
+      "sha256": "54761ae096bf1e8df1aa5fa8dd0eee13c807472bc27c639c281f8738e8e1ada0"
+    },
+    {
+      "path": "web/src/main.tsx",
+      "sha256": "7dcc806177b955cf165613a46895df0911443abe0629b3dcad94ab28dfd80831"
+    },
+    {
+      "path": "web/src/md.tsx",
+      "sha256": "a8bb85598cb643becb35669d2580887e59713d3789635f3633910acc21fb010b"
+    },
+    {
+      "path": "web/src/pages/Audit.tsx",
+      "sha256": "8fe79e7ba80245d2f870137f674823e0d99a529776cbcd225742cd42875f724e"
+    },
+    {
+      "path": "web/src/pages/Chat.tsx",
+      "sha256": "5bfa9fb941b02dd550c94e4bc497dc0c88f6b3c95fee93adfd8b015349e990f8"
+    },
+    {
+      "path": "web/src/pages/Evals.tsx",
+      "sha256": "d173f3c5608bbc3a26e0f638080db7b1776adbc36821bfabf5c93ae611d53de9"
+    },
+    {
+      "path": "web/src/pages/Knowledge.tsx",
+      "sha256": "514cb39d883c56316ef2c9c99aaedcecb5888f96d68358f370c7854b14e623f6"
+    },
+    {
+      "path": "web/src/pages/Models.tsx",
+      "sha256": "be27110fb53489e67a21639c6697f309c099dc9812fc6f23e4cd5f89f0bf4fd1"
+    },
+    {
+      "path": "web/src/pages/Runs.tsx",
+      "sha256": "0c6ace25a1f0e9865e2406e9306a2fd0835f05fa28984398f6e33284ab76051f"
+    },
+    {
+      "path": "web/src/pages/Seal.tsx",
+      "sha256": "53f697c5d7630d3539db399207bc45cc625b35514aa50b7844ff2a215ee8f5f9"
+    },
+    {
+      "path": "web/src/pages/Settings.tsx",
+      "sha256": "56840cdf8389e87f44c8f94c62ee4b2e4e4206a69e220cf0484729b76d5b4b8b"
+    },
+    {
+      "path": "web/src/rpc.ts",
+      "sha256": "373c62780f351d09b7d1076cf98f2f95ea32ab45e9e25277853ca3228bd5acf1"
+    },
+    {
+      "path": "web/src/studio.css",
+      "sha256": "61883306a029aa327802169efa99076cc7cfa0d25210dde2ef5b9f4fa20fefc0"
+    },
+    {
+      "path": "web/src/styles.css",
+      "sha256": "3cc690f1673922dccb66c3c1e8ecaab6a98126fca9285a9dc3906e7d5d673216"
+    },
+    {
+      "path": "models/profiles/laptop.yaml",
+      "sha256": "59dd820101a6fe671375b484b1bb3ee7d94c97da0bb2b1925a3d415493e9ee50"
+    },
+    {
+      "path": "models/profiles/lite-compose.yaml",
+      "sha256": "dae33b1301307119acdb60392b6302711a1d2fdc6bfb699d3a2a5a9772aad760"
+    },
+    {
+      "path": "models/profiles/lite.yaml",
+      "sha256": "d9d72ef4e201b1241e04e3c2c53db4af8c5167f67d28d4f9a629acaaf75f3cee"
+    },
+    {
+      "path": "models/profiles/mock.yaml",
+      "sha256": "e771f6397081d201f50b9fd55912311586439a9ca40ed88bf78bc071994841c7"
+    },
+    {
+      "path": "models/profiles/portable.yaml",
+      "sha256": "79283c70e6f51258ac2f5cdc4abe12dc4220c99247555a31c39a5c30d8c33c5b"
+    },
+    {
+      "path": "models/profiles/refinery-compose.yaml",
+      "sha256": "125387a98f714ef68636041f3f06aa9dac32ae02803e64cfadd8cb50cd17ad48"
+    },
+    {
+      "path": "models/profiles/refinery.yaml",
+      "sha256": "b57bc1b2d9d03b7caf42b57206ba9217462ab5255c7d75081754c69d796537b8"
+    },
+    {
+      "path": "models/profiles/standard-compose.yaml",
+      "sha256": "1cac56f768232a466eba51f6a6f38464509221503bff96176962fadc8f2e78bd"
+    },
+    {
+      "path": "models/profiles/standard.yaml",
+      "sha256": "e0a587aa4227c4a86db8374f679669d34382165e82bbdbe3695db29b4b003b8b"
+    }
+  ]
+}

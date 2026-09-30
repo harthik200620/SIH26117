@@ -1,0 +1,97 @@
+{
+  "tool_calls": [
+    [
+      "python",
+      "done",
+      "{\"code\": \"import json\\nimport math\\n\\nsum_of_squares = sum(i**2 for i in range(1, 11))\\nwith open('result.json', 'w') as f:\\n    json.dump({'sum_of_squares': sum_of_squares}, f)\", \"cwd\": \".\", \"timeout_s\": 120.0}",
+      "{\"exit_code\": 0, \"wall_s\": 0.292, \"cpu_s\": 1329.414951, \"peak_rss_mb\": 5340.82421875, \"timed_out\": false, \"files_changed\": [\"result.json\"], \"blocked_net_attempts\": 0, \"backend\": \"bwrap\", \"truncated\": false}"
+    ]
+  ],
+  "run": {
+    "run_id": "69e94bed18c244128fdf77905ad146ce",
+    "goal": "Use the python tool to calculate the sum of squares of integers 1 through 10 inclusive and write result.json as a JSON object with key sum_of_squares. The Python code must actually execute. Report the result and whether execution succeeded. This is a synthetic sandbox validation.",
+    "status": "done_with_gaps",
+    "workspace": "<workspace>",
+    "final": {
+      "summary": "t1 Calculate the sum of squares of integers 1 through 10 and write the result to result.json: [budget exhausted] Task stopped: budget exhausted after 0 steps.\nGaps:\n- t1 (Calculate the sum of squares of integers 1 through 10 and write the result to result.json): delivered partially \u2014   fix: reviewer unavailable: budget exceeded: sandbox_cpu_s used 1329 of 1200",
+      "artifacts": [],
+      "assumptions": [],
+      "unverified": [],
+      "gaps": [
+        "t1 (Calculate the sum of squares of integers 1 through 10 and write the result to result.json): delivered partially \u2014   fix: reviewer unavailable: budget exceeded: sandbox_cpu_s used 1329 of 1200"
+      ],
+      "budget_used": {
+        "tokens_used": 1290,
+        "prompt_tokens": 1011,
+        "completion_tokens": 279,
+        "tokens_max": 40000,
+        "seconds_used": 140.5,
+        "seconds_max": 1200.0,
+        "tool_calls_used": 1,
+        "tool_calls_max": 50,
+        "sandbox_cpu_used": 1329.4,
+        "sandbox_cpu_max": 1200.0
+      }
+    },
+    "budget_used": {
+      "tokens_used": 1290,
+      "prompt_tokens": 1011,
+      "completion_tokens": 279,
+      "tokens_max": 40000,
+      "seconds_used": 140.5,
+      "seconds_max": 1200.0,
+      "tool_calls_used": 1,
+      "tool_calls_max": 50,
+      "sandbox_cpu_used": 1329.4,
+      "sandbox_cpu_max": 1200.0
+    },
+    "created_at": "2026-09-21T05:54:58.871856",
+    "mode": "auto",
+    "model": null,
+    "plan": {
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "Calculate the sum of squares of integers 1 through 10 and write the result to result.json",
+          "intent": "Write a Python script that calculates the sum of squares of integers from 1 to 10 and saves the result as a JSON object with the key 'sum_of_squares' in a file named 'result.json'. Ensure the script is executable and returns the result.\nOriginal objective: Use the python tool to calculate the sum of squares of integers 1 through 10 inclusive and write result.json as a JSON object with key sum_of_squares. The Python code must actually execute. Report the result and whether execution succeeded. This is a synthetic sandbox validation.",
+          "role": "coder",
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "result.json",
+              "type": "text",
+              "path_hint": null,
+              "schema_id": null
+            }
+          ],
+          "acceptance": [
+            {
+              "kind": "file_exists",
+              "path": "result.json"
+            },
+            {
+              "kind": "tool_succeeded",
+              "tool": "python"
+            }
+          ],
+          "budget": {
+            "max_steps": 12,
+            "max_tokens": 12000,
+            "max_seconds": 900,
+            "max_retries": 2
+          },
+          "model_hint": null
+        }
+      ],
+      "edges": [],
+      "rationale": "",
+      "version": 1
+    }
+  },
+  "checks": {
+    "exists": true,
+    "sum_of_squares": true,
+    "python_executed": true
+  },
+  "scope": "Synthetic real-model code execution case, not a general benchmark"
+}

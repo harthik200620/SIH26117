@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from yantra_server.protocol import messages as msg
 from yantra_server.rpc import EventBus
@@ -88,9 +88,12 @@ class RunNotifier:
         assumptions: list[str],
         unverified: list[str],
         budget_used: dict[str, Any],
+        *,
+        response_kind: Literal["workflow", "conversation"] = "workflow",
     ) -> None:
         self._publish(
             msg.RunFinished(
+                response_kind=response_kind,
                 status=status,
                 summary=summary,
                 artifacts=artifacts,

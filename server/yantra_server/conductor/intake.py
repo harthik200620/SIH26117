@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,7 +10,7 @@ from yantra_server.gateway.engines.base import ChatMessage, Decoding
 from yantra_server.gateway.service import ModelRequest
 from yantra_server.observe.tracing import span
 
-from .types import GoalSpec
+from .types import DeliverableSpec, GoalSpec
 
 if TYPE_CHECKING:
     from yantra_server.state import AppState
@@ -77,6 +78,16 @@ async def build_goal_spec(
     collections: list[str],
     attachments: list[str],
 ) -> GoalSpec:
+    if state.config.execution.compact_planning:
+        # Intake must not reinterpret unrelated filenames as output locations. The
+        # executor retrieves evidence separately; preserve the user's objective here.
+        match = re.fullmatch(
+            r"(?:write|create)\s+[\"'`]?([\w./-]+\.(?:txt|md|csv|json|py))[\"'`]?\s+containing\s+(?:exactly\s+)?(.+)",
+            goal_text.strip(),
+            re.I | re.S,
+        )
+        deliverables = [DeliverableSpec(name=match[1], type="text")] if match else []
+        return GoalSpec(objective=goal_text, deliverables=deliverables)
     with span("intake", kind="intake", goal=goal_text[:300]) as sp:
         grounding_parts = [f"Workspace tree:\n{workspace_tree(workspace)}"]
         memory = project_memory(workspace)
@@ -110,6 +121,8 @@ async def build_goal_spec(
         )
         spec = result.parsed
         assert isinstance(spec, GoalSpec)
+        # Tightening wording must never erase literal content or constraints the user gave.
+        spec.objective = goal_text
         sp.set("deliverables", [d.name for d in spec.deliverables])
         sp.set("open_questions", spec.open_questions)
         return spec

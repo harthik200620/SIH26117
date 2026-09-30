@@ -17,6 +17,7 @@ GOAL = "Create smoke.txt containing exactly the line SEALED OK"
 
 def _script_mock(engine: MockEngine) -> None:
     engine.reset()  # clear any scripts left by a prior scenario when suites share one state
+    engine.add_canned({"json": {"route": "workflow"}}, role="planner", contains="Request routing:")
     engine.add_canned(
         {
             "json": {

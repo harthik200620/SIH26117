@@ -1,0 +1,51 @@
+{
+  "case": "pump",
+  "run_id": "4d3802912869404cb5b20b31e44311d4",
+  "status": "done_with_gaps",
+  "passed": false,
+  "checks": {
+    "valid_json": true,
+    "hydraulic_power": true,
+    "shaft_power": true,
+    "synthetic_label": true,
+    "source_files": true,
+    "oem_limit_unknown": true,
+    "assumptions_present": true
+  },
+  "usage": {
+    "tokens_used": 30580,
+    "prompt_tokens": 27572,
+    "completion_tokens": 3008,
+    "tokens_max": 40000,
+    "seconds_used": 688.8,
+    "seconds_max": 1200.0,
+    "tool_calls_used": 8,
+    "tool_calls_max": 50,
+    "sandbox_cpu_used": 0.0,
+    "sandbox_cpu_max": 1200
+  },
+  "artifact": "workspace/evaluation-360633b1e2/pump-result.json",
+  "artifact_sha256": "a5745ba66c89c18660f2a760ecf1a77f356debcd8411726edfef611160258003",
+  "final": {
+    "summary": "Gaps:\n- t1 (Produce and check the requested deliverable): Repeated identical action without progress; replan using the observed tool error.",
+    "artifacts": [],
+    "assumptions": [],
+    "unverified": [],
+    "gaps": [
+      "t1 (Produce and check the requested deliverable): Repeated identical action without progress; replan using the observed tool error."
+    ],
+    "budget_used": {
+      "tokens_used": 30580,
+      "prompt_tokens": 27572,
+      "completion_tokens": 3008,
+      "tokens_max": 40000,
+      "seconds_used": 688.8,
+      "seconds_max": 1200.0,
+      "tool_calls_used": 8,
+      "tool_calls_max": 50,
+      "sandbox_cpu_used": 0.0,
+      "sandbox_cpu_max": 1200
+    }
+  },
+  "scope": "Synthetic fixture only. No OS egress or general industrial accuracy attestation."
+}

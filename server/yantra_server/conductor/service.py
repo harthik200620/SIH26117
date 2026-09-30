@@ -15,10 +15,11 @@ from sqlalchemy import select
 from yantra_server.agents import AgentRoster
 from yantra_server.conductor.budgets import BudgetTracker
 from yantra_server.db.base import utcnow
-from yantra_server.db.models import RunRow, SessionRow
+from yantra_server.db.models import RunRow, SessionRow, ToolCallRow
 from yantra_server.observe.tracing import run_context, span
 from yantra_server.sandbox import SandboxError, select_sandbox
 
+from .conversation import route_request
 from .intake import build_goal_spec
 from .notify import RunNotifier
 from .planner import make_plan
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
 
 PLAN_APPROVAL_TIMEOUT_S = 1800.0
 QUESTION_TIMEOUT_S = 900.0
+UNFINISHED_STATUSES = ("created", "intake", "planning", "running")
+TERMINAL_STATUSES = ("done", "done_with_gaps", "cancelled", "planned", "failed")
 
 
 @dataclass
@@ -45,6 +48,7 @@ class Conductor:
     roster: AgentRoster
     _active: dict[str, ActiveRun] = field(default_factory=dict)
     _questions: dict[str, asyncio.Future[list[str]]] = field(default_factory=dict)
+    _question_runs: dict[str, str] = field(default_factory=dict)
     _approvals: dict[str, asyncio.Future[str]] = field(default_factory=dict)
 
     # ------------------------------------------------------------- lifecycle
@@ -57,10 +61,15 @@ class Conductor:
         mode_override: str | None = None,
         budget_overrides: dict[str, int] | None = None,
     ) -> str:
+        from yantra_server.security import workspace_path
+
+        if self.state.config.profile in {"portable", "laptop"} and self._active:
+            raise ValueError("A workflow is already running")
         with self.state.db.session() as s:
             session = s.get(SessionRow, session_id)
             if session is None:
                 raise ValueError(f"unknown session {session_id}")
+            workspace_path(session.workspace_path, self.state.config.paths.workspace_roots)
             mode = mode_override or session.mode
             run = RunRow(
                 session_id=session_id,
@@ -73,6 +82,8 @@ class Conductor:
                     "max_tokens": self.state.config.budgets.max_tokens,
                     "max_seconds": self.state.config.budgets.max_seconds,
                     "max_tool_calls": self.state.config.budgets.max_tool_calls,
+                    "max_sandbox_cpu_s": self.state.config.budgets.max_sandbox_cpu_s,
+                    **(budget_overrides or {}),
                 },
             )
             s.add(run)
@@ -82,23 +93,74 @@ class Conductor:
             "user", "run.start", {"run_id": run_id, "goal": goal_text[:300], "mode": mode}
         )
         self._launch(
-            run_id, goal_text, Path(str(run.workspace_path)), mode, attachments, resume=False
+            run_id,
+            goal_text,
+            Path(str(run.workspace_path)),
+            mode,
+            attachments,
+            resume=False,
+            budget_overrides=budget_overrides,
         )
         return run_id
 
     async def resume_run(self, run_id: str) -> str:
+        from yantra_server.security import workspace_path
+
+        if run_id in self._active:
+            raise ValueError("This workflow is already running")
+        if self.state.config.profile in {"portable", "laptop"} and self._active:
+            raise ValueError("A workflow is already running")
         with self.state.db.session() as s:
             run = s.get(RunRow, run_id)
             if run is None:
                 raise ValueError(f"unknown run {run_id}")
-            if run.status in ("done", "cancelled", "planned"):
+            if run.status in TERMINAL_STATUSES:
                 return run_id
             goal_text = run.goal_text
-            workspace = Path(run.workspace_path)
+            workspace = workspace_path(run.workspace_path, self.state.config.paths.workspace_roots)
             mode = run.mode
+        uncertain = self.uncertain_operations(run_id)
+        if uncertain:
+            raise ValueError(
+                "Recovery paused: an interrupted operation may have changed files. "
+                "Inspect its outcome before starting new work; it will not be repeated automatically."
+            )
         self.state.audit.append("user", "run.resume", {"run_id": run_id})
+        self.state.tools.broker.revoke_run(run_id)
         self._launch(run_id, goal_text, workspace, mode, [], resume=True)
         return run_id
+
+    def uncertain_operations(self, run_id: str) -> list[dict[str, Any]]:
+        with self.state.db.session() as s:
+            rows = (
+                s.execute(
+                    select(ToolCallRow).where(
+                        ToolCallRow.run_id == run_id, ToolCallRow.status.in_(("pending", "running"))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {"call_id": row.id, "tool": row.tool, "args": row.args}
+                for row in rows
+                if (tool := self.state.tools.registry.get(row.tool)) is None
+                or tool.side_effects not in ("none", "read")
+            ]
+
+    def reconcile_interrupted(self) -> list[str]:
+        """Called once at startup, before accepting requests. Never rerun work implicitly."""
+        recovered: list[str] = []
+        with self.state.db.session() as s:
+            for run in s.execute(
+                select(RunRow).where(RunRow.status.in_(UNFINISHED_STATUSES))
+            ).scalars():
+                if run.id not in self._active:
+                    run.status = "interrupted"
+                    recovered.append(run.id)
+        for run_id in recovered:
+            self.state.audit.append("system", "run.interrupted", {"run_id": run_id})
+        return recovered
 
     def _launch(
         self,
@@ -111,17 +173,32 @@ class Conductor:
         resume: bool,
         budget_overrides: dict[str, int] | None = None,
     ) -> None:
+        if run_id in self._active:
+            raise ValueError("This workflow is already running")
         notifier = RunNotifier(self.state.bus, run_id)
         overrides = budget_overrides or {}
+        used: dict[str, float] = {}
+        if resume:
+            with self.state.db.session() as s:
+                row = s.get(RunRow, run_id)
+                if row is not None:
+                    overrides = row.budgets
+                    used = row.budget_used
+                    if model := row.budgets.get("model"):
+                        self.state.gateway.run_models[run_id] = str(model)
         budget = BudgetTracker(
             max_tokens=int(overrides.get("max_tokens", self.state.config.budgets.max_tokens)),
             max_seconds=float(overrides.get("max_seconds", self.state.config.budgets.max_seconds)),
             max_tool_calls=int(
                 overrides.get("max_tool_calls", self.state.config.budgets.max_tool_calls)
             ),
-            max_sandbox_cpu_s=self.state.config.budgets.max_sandbox_cpu_s,
+            max_sandbox_cpu_s=float(
+                overrides.get("max_sandbox_cpu_s", self.state.config.budgets.max_sandbox_cpu_s)
+            ),
             warn_ratio=self.state.config.budgets.warn_ratio,
         )
+        budget.restore(used)
+        budget.on_change = lambda usage: self._persist_budget(run_id, usage)
         try:
             sandbox = select_sandbox(
                 self.state.config.sandbox, workspace, sealed=self.state.config.sealed()
@@ -129,6 +206,7 @@ class Conductor:
         except SandboxError as exc:
             notifier.error("sandbox_unavailable", str(exc))
             self._set_run_status(run_id, "failed", final={"summary": str(exc)})
+            notifier.finished("failed", str(exc), [], [], [], {})
             return
         controller = RunController(
             state=self.state,
@@ -140,18 +218,27 @@ class Conductor:
             budget=budget,
             sandbox=sandbox,
         )
+        self.state.gateway.run_budgets[run_id] = budget
         driver = asyncio.create_task(
             self._drive(controller, goal_text, attachments, resume=resume),
             name=f"run-{run_id[:8]}",
         )
         self._active[run_id] = ActiveRun(controller=controller, driver=driver, notifier=notifier)
-        driver.add_done_callback(lambda _t: self._active.pop(run_id, None))
+        self._set_run_status(run_id, "created")
+
+        def remove_driver(done: asyncio.Task[None]) -> None:
+            current = self._active.get(run_id)
+            if current is not None and current.driver is done:
+                self._active.pop(run_id, None)
+
+        driver.add_done_callback(remove_driver)
 
     def cancel(self, run_id: str) -> bool:
         active = self._active.get(run_id)
         if active is None:
             return False
         active.controller.cancel_event.set()
+        active.driver.cancel()
         self.state.audit.append("user", "run.cancel", {"run_id": run_id})
         return True
 
@@ -169,25 +256,58 @@ class Conductor:
         notifier = controller.notifier
         with run_context(run_id=run_id), span("run", kind="run", mode=controller.mode):
             try:
-                goal_spec, plan = await self._prepare(
-                    controller, goal_text, attachments, resume=resume
-                )
-                if plan is None:  # plan-only mode
-                    return
-                controller.goal_spec = goal_spec  # type: ignore[attr-defined]
-                self._set_run_status(run_id, "running")
-                await controller.run()
-                await self._finalize(controller, goal_spec)
+                controller.budget.check()
+                remaining = controller.budget.max_seconds - controller.budget.elapsed_s()
+                async with asyncio.timeout(
+                    remaining if controller.budget.max_seconds > 0 else None
+                ):
+                    goal_spec, plan = await self._prepare(
+                        controller, goal_text, attachments, resume=resume
+                    )
+                    if plan is None:  # direct reply or plan-only mode
+                        return
+                    controller.goal_spec = goal_spec  # type: ignore[attr-defined]
+                    self._set_run_status(run_id, "running")
+                    await controller.run()
+                    await self._finalize(controller, goal_spec)
             except asyncio.CancelledError:
-                # User cancellation (Esc) sets cancel_event; a bare task cancel is a crash
-                # (kill -9 analogue) and must leave the persisted state untouched so
-                # `yantra resume` can pick the run up from its checkpoints.
+                # Preserve checkpoints on shutdown; explicit cancellation is terminal.
                 if controller.cancel_event.is_set():
-                    self._set_run_status(run_id, "cancelled")
+                    self._set_run_status(
+                        run_id,
+                        "cancelled",
+                        final={
+                            "summary": "Stopped by user.",
+                            "budget_used": controller.budget.snapshot(),
+                        },
+                    )
+                    notifier.finished(
+                        "cancelled", "Stopped by user.", [], [], [], controller.budget.snapshot()
+                    )
+                else:
+                    self._set_run_status(run_id, "interrupted")
                 raise
             except Exception as exc:
                 notifier.error("run_failed", f"{type(exc).__name__}: {exc}")
-                self._set_run_status(run_id, "failed", final={"summary": f"run failed: {exc}"})
+                self._set_run_status(
+                    run_id,
+                    "failed",
+                    final={
+                        "summary": f"run failed: {exc}",
+                        "budget_used": controller.budget.snapshot(),
+                    },
+                )
+                notifier.finished(
+                    "failed", f"Run failed: {exc}", [], [], [], controller.budget.snapshot()
+                )
+            finally:
+                for child in controller.children:
+                    child.cancel()
+                await asyncio.gather(*controller.children, return_exceptions=True)
+                controller.budget.persist()
+                self.state.tools.broker.revoke_run(run_id)
+                self.state.gateway.run_models.pop(run_id, None)
+                self.state.gateway.run_budgets.pop(run_id, None)
 
     async def _prepare(
         self,
@@ -203,9 +323,54 @@ class Conductor:
             controller.restore_from_db(stored_plan)
             controller.goal_spec = stored_spec  # type: ignore[attr-defined]
             controller.notifier.plan_updated(stored_plan.model_dump(mode="json"))
+            if controller.mode == "ask":
+                decision = await self._await_plan_approval(controller, stored_plan)
+                if decision == "deny":
+                    self._set_run_status(run_id, "cancelled")
+                    controller.notifier.finished("cancelled", "Plan rejected.", [], [], [], {})
+                    return stored_spec, None
             return stored_spec, stored_plan
 
         self._set_run_status(run_id, "intake")
+        disposition = await route_request(self.state, goal_text, attachments)
+        if disposition.route == "conversation":
+            summary = disposition.reply.strip()
+            budget_used = controller.budget.snapshot()
+            self._set_run_status(
+                run_id,
+                "done",
+                final={
+                    "response_kind": "conversation",
+                    "summary": summary,
+                    "artifacts": [],
+                    "assumptions": [],
+                    "unverified": [],
+                    "budget_used": budget_used,
+                },
+            )
+            controller.notifier.finished(
+                "done", summary, [], [], [], budget_used, response_kind="conversation"
+            )
+            self.state.audit.append(
+                "system", "run.finished",
+                {"run_id": run_id, "status": "done", "response_kind": "conversation"},
+            )
+            return GoalSpec(objective=goal_text), None
+
+        if self.state.config.knowledge.auto_index_workspace and self.state.knowledge is not None:
+            from yantra_server.workbench import collection_for
+
+            collection = collection_for(controller.workspace)
+            controller.notifier.assistant("Indexing the selected local workspace…\n")
+            stats = await self.state.knowledge.ingest_path(controller.workspace, collection)
+            with self.state.db.session() as s:
+                row = s.get(RunRow, run_id)
+                if row:
+                    row.collections = list(dict.fromkeys([*row.collections, collection]))
+            controller.notifier.assistant(
+                f"Local index: {stats.documents} updated, {stats.skipped} unchanged, "
+                f"{stats.chunks} chunks, {stats.errors} errors.\n"
+            )
         goal_spec = await build_goal_spec(
             self.state,
             goal_text,
@@ -250,7 +415,7 @@ class Conductor:
         return goal_spec, plan
 
     async def _await_plan_approval(self, controller: RunController, plan: Plan) -> str:
-        request_id = f"plan:{controller.run_id}"
+        request_id = f"plan:{controller.run_id}:{uuid.uuid4().hex[:12]}"
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         self._approvals[request_id] = future
@@ -285,9 +450,7 @@ class Conductor:
                         f"{task_id} ({task_state.plan_task.title}): {task_state.failure_summary or task_state.status}"
                     )
                 continue
-            summaries.append(
-                f"{task_id} {task_state.plan_task.title}: {task_state.finish.summary[:300]}"
-            )
+            summaries.append(f"{task_id} {task_state.plan_task.title}: {task_state.finish.summary}")
             for ref in task_state.finish.artifacts:
                 path = controller.workspace / ref
                 artifacts.append(
@@ -369,6 +532,7 @@ class Conductor:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[list[str]] = loop.create_future()
         self._questions[request_id] = future
+        self._question_runs[request_id] = run_id
         active.notifier.question(request_id, questions)
         try:
             return await asyncio.wait_for(future, timeout=QUESTION_TIMEOUT_S)
@@ -376,16 +540,36 @@ class Conductor:
             return None
         finally:
             self._questions.pop(request_id, None)
+            self._question_runs.pop(request_id, None)
 
-    def resolve_question(self, request_id: str, answers: list[str]) -> bool:
+    def pending_request_ids(self, run_id: str) -> list[str]:
+        ids = [
+            key
+            for key, future in self._questions.items()
+            if not future.done() and self._question_runs.get(key) == run_id
+        ]
+        ids.extend(
+            key
+            for key, future in self._approvals.items()
+            if key.startswith(f"plan:{run_id}:") and not future.done()
+        )
+        return ids
+
+    def resolve_question(
+        self, request_id: str, answers: list[str], *, run_id: str | None = None
+    ) -> bool:
+        if run_id is not None and self._question_runs.get(request_id) != run_id:
+            return False
         future = self._questions.get(request_id)
         if future is None or future.done():
             return False
         future.set_result(answers)
         return True
 
-    def resolve_plan_approval(self, run_id: str, decision: str) -> bool:
-        future = self._approvals.get(f"plan:{run_id}")
+    def resolve_plan_approval(self, run_id: str, decision: str, *, request_id: str) -> bool:
+        if not request_id.startswith(f"plan:{run_id}:"):
+            return False
+        future = self._approvals.get(request_id)
         if future is None or future.done():
             return False
         future.set_result("allow" if decision in ("once", "always", "allow") else "deny")
@@ -421,6 +605,12 @@ class Conductor:
 
     # ------------------------------------------------------------- persistence helpers
 
+    def _persist_budget(self, run_id: str, usage: dict[str, float]) -> None:
+        with self.state.db.session() as s:
+            row = s.get(RunRow, run_id)
+            if row is not None:
+                row.budget_used = usage
+
     def _set_run_status(
         self, run_id: str, status: str, final: dict[str, Any] | None = None
     ) -> None:
@@ -429,8 +619,12 @@ class Conductor:
             if run is None:
                 return
             run.status = status
+            if status not in TERMINAL_STATUSES:
+                run.finished_at = None
+                run.final = None
             if final is not None:
                 run.final = final
+                run.budget_used = final.get("budget_used", {})
             if status in ("done", "done_with_gaps", "failed", "cancelled"):
                 run.finished_at = utcnow()
 

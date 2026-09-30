@@ -42,11 +42,14 @@ vision = [
     "pillow>=10.4",
 ]
 # Rendering extras (M7+).
+ocr = ["rapidocr-onnxruntime==1.4.4"]  # provisioned weights are bundled; no runtime downloads
 render = [
     "docxtpl>=0.18",
     "matplotlib>=3.9",
     "reportlab>=4.2",
 ]
+# Packages advertised by the sandboxed Python analysis tool.
+analysis = ["pandas>=2.2,<3", "numpy>=1.26", "matplotlib>=3.9", "openpyxl>=3.1"]
 # In-process embedding fallback (PoolingWorker); heavy, optional.
 pooling = ["sentence-transformers>=3.0"]
 

@@ -77,7 +77,7 @@ class ReadFileArgs(BaseModel):
 
 class ReadFileTool(Tool):
     name = "read_file"
-    description = "Read a text file with line numbers. Use offset/limit to page long files."
+    description = "Read a text file with line numbers. Use offset/limit for long text. For PDF/DOCX/PPTX use read_pages instead."
     Args = ReadFileArgs
     side_effects = "read"
 
@@ -85,6 +85,12 @@ class ReadFileTool(Tool):
         path = ctx.resolve_path(args.path)
         if not path.is_file():
             return ToolResult.fail(f"no such file: {args.path}")
+        if path.suffix.lower() in {".pdf", ".docx", ".pptx"}:
+            return ToolResult.fail(
+                f"{args.path} is a structured document, not a text file. "
+                "Use read_pages with this path and pages '1' to start; "
+                "text line counts are not document page counts."
+            )
         if path.stat().st_size > MAX_READ_BYTES:
             return ToolResult.fail(
                 f"{args.path} is {path.stat().st_size:,} B (>4 MB); page it with offset/limit "

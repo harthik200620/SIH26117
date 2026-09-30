@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getJson } from "../api.js";
-import { Card, Page, Pill, Section } from "../components.js";
+import { Card, Page, Section } from "../components.js";
 
 function logClass(line: string): string {
   const l = line.toLowerCase();
@@ -75,17 +75,17 @@ export function SettingsPage(): React.ReactElement {
     return () => clearInterval(timer);
   }, [openLog]);
 
-  if (!cfg) return <Page title="Settings"><div className="muted">Loading…</div></Page>;
+  if (!cfg) return <Page title="Runtime & logs"><div className="muted">Loading…</div></Page>;
 
   return (
-    <Page title="Settings" desc="Effective configuration, storage locations, and live engine logs.">
+    <Page title="Runtime & logs" desc="Effective configuration, storage locations, and live engine logs.">
       <Section>This installation</Section>
       <Card pad={false}>
         <div className="table-wrap">
           <table>
             <tbody>
               <tr><td style={{ width: 160 }} className="dim">Profile</td><td><span className="chip">{cfg.profile}</span></td></tr>
-              <tr><td className="dim">Seal</td><td>{cfg.sealed ? <Pill tone="ok">sealed · zero egress</Pill> : <Pill tone="warn">unsealed · development mode — the agent works directly on this computer</Pill>}</td></tr>
+              <tr><td className="dim">Privacy controls</td><td><a href="#assurance/network">View network controls and verification →</a></td></tr>
               <tr><td className="dim">Config file</td><td className="mono">{cfg.config_file ?? "(defaults — create yantra.yaml to override)"}</td></tr>
               <tr><td className="dim">Data &amp; logs</td><td className="mono">{cfg.data_dir}</td></tr>
               <tr><td className="dim">Models</td><td className="mono">{cfg.models_dir}</td></tr>
@@ -110,7 +110,7 @@ export function SettingsPage(): React.ReactElement {
                     <td className="num dim">{f.size_kb} KB</td>
                     <td style={{ textAlign: "right" }}>
                       <button onClick={() => setOpenLog(openLog === f.name ? null : f.name)}>
-                        {openLog === f.name ? "Close" : "Tail"}
+                        {openLog === f.name ? "Close" : "View log"}
                       </button>
                     </td>
                   </tr>
@@ -129,7 +129,7 @@ export function SettingsPage(): React.ReactElement {
         </>
       )}
 
-      <Section>Every setting, with its source</Section>
+      <details className="advanced-details"><summary>Advanced configuration</summary>
       <Card pad={false}>
         <div className="table-wrap">
           <table>
@@ -150,7 +150,7 @@ export function SettingsPage(): React.ReactElement {
         Change settings in <span className="cmd">yantra.yaml</span> (workspace or <span className="mono">~/.yantra</span>),
         via <span className="cmd">YANTRA_*</span> environment variables, or CLI flags — precedence is
         profile &lt; file &lt; env &lt; CLI, and this table always shows which layer won.
-      </p>
+      </p></details>
     </Page>
   );
 }

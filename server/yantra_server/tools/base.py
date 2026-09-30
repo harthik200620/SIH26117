@@ -55,6 +55,8 @@ class ToolContext:
 
     def resolve_path(self, user_path: str) -> Path:
         """Workspace-scoped path resolution; symlink-escape-proof (SPEC §9.2)."""
+        if user_path.startswith(("\\\\", "//")):
+            raise ToolError("Network shares are disabled")
         candidate = Path(user_path)
         if not candidate.is_absolute():
             candidate = self.workspace / candidate

@@ -73,6 +73,7 @@ class RunController:
     replans_used: int = 0
 
     def __post_init__(self) -> None:
+        self.children: set[asyncio.Task[None]] = set()
         self.executor = TaskExecutor(
             state=self.state,
             roster=self.roster,
@@ -128,7 +129,9 @@ class RunController:
                     task_state.finish = None
             self.tasks[short_id] = task_state
         for plan_task in plan.tasks:  # tasks added by a replan after the crash
-            self.tasks.setdefault(plan_task.id, TaskState(plan_task=plan_task))
+            if plan_task.id not in self.tasks:
+                self.tasks[plan_task.id] = TaskState(plan_task=plan_task)
+                self._persist_task(plan_task, plan.tasks.index(plan_task))
 
     def _db_task_id(self, task_id: str) -> str:
         return f"{self.run_id[:12]}:{task_id}"
@@ -259,6 +262,8 @@ class RunController:
             )
             for task_id in ready:
                 running[task_id] = asyncio.create_task(run_one(task_id), name=f"task-{task_id}")
+                self.children.add(running[task_id])
+                running[task_id].add_done_callback(self.children.discard)
             if not running:
                 blocked = [t for t, ts in self.tasks.items() if ts.status == "pending"]
                 for task_id in blocked:  # dependency failed permanently
@@ -267,6 +272,8 @@ class RunController:
                     self._transition(task_id, status="failed", failure_summary="dependency failed")
                 return
             done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+            for completed in done:
+                await completed
             running = {tid: t for tid, t in running.items() if t not in done}
 
     # ------------------------------------------------------------- ladder

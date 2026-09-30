@@ -1050,6 +1050,15 @@ Params schema:
       "title": "Seq",
       "type": "integer"
     },
+    "response_kind": {
+      "default": "workflow",
+      "enum": [
+        "workflow",
+        "conversation"
+      ],
+      "title": "Response Kind",
+      "type": "string"
+    },
     "status": {
       "default": "done",
       "title": "Status",

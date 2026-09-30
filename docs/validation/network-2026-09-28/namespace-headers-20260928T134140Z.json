@@ -1,0 +1,34 @@
+{
+  "started_utc": "2026-09-28T13:41:40.358009+00:00",
+  "ended_utc": "2026-09-28T13:42:25.493838+00:00",
+  "observed_seconds": 45.135,
+  "network_namespace": "net:[4026532306]",
+  "interfaces": [
+    [
+      1,
+      "lo"
+    ]
+  ],
+  "pcap": "namespace-headers-20260928T134140Z.pcap",
+  "sha256": "51045bf284603e508af0618030a3d865d3663b6cba7385b4fd5e29919c62db31",
+  "captured_ip_packets": 1168,
+  "non_loopback_ip_packets": 0,
+  "omitted_non_ip_or_short_frames": 0,
+  "ip_protocol_counts": {
+    "IPv4": 1168
+  },
+  "kernel_received": 1168,
+  "kernel_dropped": 0,
+  "native_outbound_probe": {
+    "destination": "203.0.113.1:443",
+    "errno": 101,
+    "blocked": true
+  },
+  "loopback_positive_control": true,
+  "limitations": [
+    "Observed namespace and time window only; not host-wide or permanent certification.",
+    "IP headers only; transport headers and payloads omitted intentionally.",
+    "Packet counts include the synthetic loopback positive control and may include duplicates.",
+    "No claim about other namespaces, GPU deployment, filesystem channels or administrator compromise."
+  ]
+}

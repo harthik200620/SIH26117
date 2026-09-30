@@ -1,0 +1,8 @@
+{
+  "hydraulic_kw": 2.1582,
+  "shaft_kw": 3.08314285714,
+  "sources": ["inspection-P101.md", "maintenance-procedure.md"],
+  "assumptions": ["water density assumed: 1000 kg/m³", "estimated pump efficiency: 0.70"],
+  "synthetic": true,
+  "oem_status": "OEM limits required; compliance not determined"
+}

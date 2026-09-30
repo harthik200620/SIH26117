@@ -1,0 +1,35 @@
+{
+  "run_id": "7515c11837064ec29fbf55538e06d2aa",
+  "status": "done",
+  "mode": "ask",
+  "usage": {
+    "tokens_used": 673,
+    "prompt_tokens": 567,
+    "completion_tokens": 106,
+    "tokens_max": 40000,
+    "seconds_used": 111.5,
+    "seconds_max": 1200.0,
+    "tool_calls_used": 1,
+    "tool_calls_max": 50,
+    "sandbox_cpu_used": 0.0,
+    "sandbox_cpu_max": 1200
+  },
+  "file_bytes": "BlackBox Workspace",
+  "permission_decisions": [
+    {
+      "tool": "write_file",
+      "decision": "allow",
+      "by": "user"
+    }
+  ],
+  "observed_browser_steps": [
+    "Submitted task with Ask before changes selected",
+    "Confirmed test file absent before approval",
+    "Approved plan",
+    "Observed separate file-write approval with path and content",
+    "Refreshed selected task; only current file permission remained visible",
+    "Approved one file write",
+    "Observed completed task, exact-content check and download link"
+  ],
+  "scope": "Single real local-model browser task; not a sandbox/network attestation."
+}

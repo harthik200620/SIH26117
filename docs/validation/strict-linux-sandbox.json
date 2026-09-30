@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "backend": "bwrap",
+  "checks": {
+    "python_calculation": true,
+    "workspace_write": true,
+    "outside_file_hidden": true,
+    "public_ipv4_connection_denied": true,
+    "public_ipv6_connection_denied": true,
+    "metadata_connection_denied": true,
+    "public_dns_unavailable": true
+  },
+  "exit_code": 0,
+  "elapsed_s": 0.271,
+  "errors": "",
+  "scope": "Synthetic behavior probes only. Denied connections do not prove OS policy enforcement or zero packets; perform native policy review and packet capture too."
+}

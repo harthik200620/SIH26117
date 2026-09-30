@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -73,6 +76,8 @@ class KnowledgeService:
         self.root.mkdir(parents=True, exist_ok=True)
         self._lexical: dict[str, LexicalIndex] = {}
         self._vector: VectorIndex | None = None
+        self._ingest_lock = asyncio.Lock()
+        self._ocr: Any = None
         self.tag_patterns = load_patterns(
             config.paths.assets_dir / config.knowledge.tag_patterns_file
             if not config.knowledge.tag_patterns_file.is_absolute()
@@ -82,6 +87,8 @@ class KnowledgeService:
     # ------------------------------------------------------------- lazy backends
 
     def lexical(self, collection: str) -> LexicalIndex:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", collection):
+            raise ValueError("Invalid collection name")
         if collection not in self._lexical:
             self._lexical[collection] = LexicalIndex(self.root / "lexical" / collection)
         return self._lexical[collection]
@@ -109,6 +116,10 @@ class KnowledgeService:
     # ------------------------------------------------------------- collections
 
     def ensure_collection(self, name: str, source_roots: list[str] | None = None) -> str:
+        import re
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name):
+            raise ValueError("Collection names use 1-80 letters, numbers, underscores or hyphens")
         with self.db.session() as s:
             existing = s.execute(
                 select(CollectionRow).where(CollectionRow.name == name)
@@ -127,10 +138,11 @@ class KnowledgeService:
             return row.id
 
     def _embed_model_id(self) -> str:
-        for manifest in self.gateway.router.registry.all():
-            if "embed" in manifest.roles:
-                return manifest.id
-        return "mock"
+        if self.config.knowledge.lexical_only:
+            return "lexical"
+        from yantra_server.gateway.router import RouteNeed
+
+        return self.gateway.router.route(RouteNeed(role="embed")).model
 
     def list_collections(self) -> list[dict[str, Any]]:
         with self.db.session() as s:
@@ -184,11 +196,37 @@ class KnowledgeService:
     async def ingest_path(
         self, source: Path, collection: str, *, on_progress: Any = None
     ) -> IngestStats:
+        async with self._ingest_lock:
+            return await self._ingest_path(source, collection, on_progress=on_progress)
+
+    async def _ingest_path(
+        self, source: Path, collection: str, *, on_progress: Any = None
+    ) -> IngestStats:
         """Discover, parse, chunk, enrich, embed and store every supported file under `source`."""
         collection_id = self.ensure_collection(collection, [str(source)])
         stats = IngestStats()
         is_file = await __import__("anyio").to_thread.run_sync(source.is_file)
-        files = [source] if is_file else self._discover(source)
+        files = [source] if is_file else await asyncio.to_thread(self._discover, source)
+        if not is_file:
+            with self.db.session() as db:
+                indexed = [
+                    (row.id, row.path)
+                    for row in db.execute(
+                        select(DocumentRow).where(DocumentRow.collection_id == collection_id)
+                    ).scalars()
+                ]
+            stale = await asyncio.to_thread(
+                lambda: [
+                    (identifier, path) for identifier, path in indexed if not Path(path).is_file()
+                ]
+            )
+            for document_id, _ in stale:
+                self._purge_document(document_id, collection_id)
+                self.lexical(collection).delete_document(document_id)
+                with self.db.session() as db:
+                    row = db.get(DocumentRow, document_id)
+                    if row:
+                        row.status = "deleted"
         for path in files:
             try:
                 changed = await self._ingest_file(path, collection, collection_id)
@@ -216,17 +254,23 @@ class KnowledgeService:
     def _discover(self, root: Path) -> list[Path]:
         ignore = self._load_ignore(root)
         found: list[Path] = []
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            if any(part in IGNORE_DIRS for part in path.parts):
-                continue
-            if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-                continue
-            rel = path.relative_to(root).as_posix()
-            if any(rel.startswith(pat) or pat in rel for pat in ignore):
-                continue
-            found.append(path)
+        root = root.resolve()
+        for directory, dirs, files in os.walk(root, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if d not in IGNORE_DIRS and not d.startswith("."))
+            for name in sorted(files):
+                path = Path(directory) / name
+                if path.suffix.lower() not in SUPPORTED_SUFFIXES or name.startswith("."):
+                    continue
+                if not path.resolve().is_relative_to(root) or path.stat().st_size > 25 * 1024**2:
+                    continue
+                rel = path.relative_to(root).as_posix()
+                if any(rel.startswith(pat) or pat in rel for pat in ignore):
+                    continue
+                found.append(path)
+                if len(found) >= 2000:
+                    raise ValueError(
+                        "Workspace exceeds 2,000 eligible files; select a smaller folder"
+                    )
         return found
 
     def _load_ignore(self, root: Path) -> list[str]:
@@ -240,7 +284,11 @@ class KnowledgeService:
         return []
 
     async def _ingest_file(self, path: Path, collection: str, collection_id: str) -> bool:
-        fingerprint = _fingerprint(path)
+        # Parser changes require re-ingestion even when the file bytes are unchanged.
+        fingerprint = (
+            (await asyncio.to_thread(_fingerprint, path))
+            + ":" + self._embed_model_id() + f":parser-4:ocr-{self.config.knowledge.local_ocr}"
+        )
         with self.db.session() as s:
             existing = s.execute(
                 select(DocumentRow).where(
@@ -252,7 +300,23 @@ class KnowledgeService:
                 return False
 
         with span("ingest.document", kind="ingest.job", path=str(path)):
-            doc = parse_document(path)
+            doc = await asyncio.to_thread(parse_document, path)
+            missing_pages = [p.page_no for p in doc.pages if any(b.meta.get("needs_ocr") for b in p.blocks)]
+            if missing_pages:
+                if not self.config.knowledge.local_ocr:
+                    raise ValueError(f"OCR required on pages {missing_pages}; local OCR is disabled.")
+                from yantra_server.knowledge.ingest.ocr import complete_ocr
+                from yantra_server.vision.ocr import OCREngine
+
+                if self._ocr is None:
+                    self._ocr = OCREngine()
+                doc = await asyncio.to_thread(
+                    complete_ocr, doc, path, self._ocr, self.config.knowledge.max_ocr_pages
+                )
+            if not doc.full_text().strip():
+                raise ValueError(
+                    "No extractable text. This document needs an installed local OCR/vision model."
+                )
             doc = classify_document(doc, path)
             chunks = chunk_document(
                 doc,
@@ -260,7 +324,9 @@ class KnowledgeService:
                 self.config.knowledge.chunk_tokens_parent,
                 self.config.knowledge.chunk_overlap_ratio,
             )
-            enrichment = await summarize(self.gateway, doc)
+            enrichment = await summarize(
+                None if self.config.knowledge.lexical_only else self.gateway, doc
+            )
 
             document_id = self._upsert_document(path, doc, collection_id, fingerprint)
             self._store_pages(document_id, doc)
@@ -271,13 +337,19 @@ class KnowledgeService:
                 chunk.context_prefix = contextual_prefix(chunk, doc, enrichment)
                 texts_for_embedding.append(f"{chunk.context_prefix}\n{chunk.text}")
 
-            vectors = await self.gateway.embed(
-                texts_for_embedding, role="embed", instruction=EMBED_INSTRUCTION
+            vectors = (
+                []
+                if self.config.knowledge.lexical_only
+                else await self.gateway.embed(
+                    texts_for_embedding, role="embed", instruction=EMBED_INSTRUCTION
+                )
             )
             self._store_chunks(document_id, collection, collection_id, doc, child_chunks, vectors)
             # document tier
-            doc_vector = await self._document_vector(doc, enrichment)
-            self._store_document_tier(collection, collection_id, document_id, doc, doc_vector)
+            if not self.config.knowledge.lexical_only:
+                doc_vector = await self._document_vector(doc, enrichment)
+                self._store_document_tier(collection, collection_id, document_id, doc, doc_vector)
+            self.lexical(collection).commit()
             self._mark_indexed(document_id)
         return True
 
@@ -306,7 +378,7 @@ class KnowledgeService:
             row.doc_type = doc.doc_type
             row.language = doc.language
             row.fingerprint = fingerprint
-            row.sha256 = fingerprint
+            row.sha256 = fingerprint.split(":", 1)[0]
             row.size = path.stat().st_size
             row.mtime = path.stat().st_mtime
             row.page_count = len(doc.pages)
@@ -368,10 +440,11 @@ class KnowledgeService:
         vectors: list[list[float]],
     ) -> None:
         lex = self.lexical(collection)
-        vec_index = self.vector()
+        vec_index = self.vector() if vectors else None
         chunk_collection = f"chunks_{collection}"
         dim = len(vectors[0]) if vectors else self.embed_dim()
-        vec_index.ensure_collection(chunk_collection, dim)
+        if vec_index is not None:
+            vec_index.ensure_collection(chunk_collection, dim)
 
         ids: list[str] = []
         payloads: list[dict[str, Any]] = []
@@ -418,7 +491,7 @@ class KnowledgeService:
                         "text": chunk.text[:2000],
                     }
                 )
-        if ids:
+        if ids and vec_index is not None:
             vec_index.upsert(chunk_collection, ids, vectors, payloads)
 
     def _store_document_tier(
@@ -441,6 +514,11 @@ class KnowledgeService:
                 row.status = "indexed"
 
     def _purge_document(self, document_id: str, collection_id: str) -> None:
+        with self.db.session() as db:
+            collection = db.get(CollectionRow, collection_id)
+            name = collection.name if collection else None
+        if name:
+            self.lexical(name).delete_document(document_id)
         with self.db.session() as s:
             from sqlalchemy import delete
 
@@ -472,6 +550,8 @@ class KnowledgeService:
         filters: dict[str, Any] | None = None,
     ) -> list[RetrievedChunk]:
         with span("retrieval", kind="retrieval", query=query[:200], mode=mode) as sp:
+            if self.config.knowledge.lexical_only:
+                mode = "lexical"
             collection_names = collections or [c["name"] for c in self.list_collections()]
             if not collection_names:
                 return []
@@ -506,8 +586,10 @@ class KnowledgeService:
             )
             sp.set("fused_candidates", len(fused))
 
-            reranked = await self._rerank(query, fused)
-            final = reranked[:k]
+            reranked = (
+                fused if self.config.knowledge.lexical_only else await self._rerank(query, fused)
+            )
+            final = [c for c in reranked if self.get_chunk(c.chunk_id) is not None][:k]
             sp.set("returned", len(final))
             return [self._to_retrieved(c) for c in final]
 
@@ -525,12 +607,13 @@ class KnowledgeService:
 
     def _to_retrieved(self, candidate: Any) -> RetrievedChunk:
         payload = candidate.payload
-        text = str(payload.get("text", ""))
+        current = self.get_chunk(candidate.chunk_id) or {}
+        text = str(current.get("text", payload.get("text", "")))
         return RetrievedChunk(
             chunk_id=candidate.chunk_id,
             document_id=str(payload.get("document_id", "")),
             title=str(payload.get("title", "")),
-            path="",
+            path=str(current.get("path", "")),
             page=payload.get("page"),
             section=str(payload.get("section", "")),
             text=text,
@@ -556,6 +639,8 @@ class KnowledgeService:
                 if parent:
                     text = parent.text
             doc = s.get(DocumentRow, row.document_id)
+            if doc is None or doc.status != "indexed":
+                return None
             return {
                 "chunk_id": chunk_id,
                 "text": text,
@@ -571,10 +656,6 @@ class KnowledgeService:
 
 
 def _fingerprint(path: Path) -> str:
-    """Cheap change-detection fingerprint: sha256 of first 1 MB + size + mtime (SPEC §10.3)."""
-    stat = path.stat()
-    hasher = hashlib.sha256()
+    """Hash all bytes so changes after the first megabyte cannot escape reindexing."""
     with path.open("rb") as fh:
-        hasher.update(fh.read(1024 * 1024))
-    hasher.update(f"{stat.st_size}:{int(stat.st_mtime)}".encode())
-    return hasher.hexdigest()
+        return hashlib.file_digest(fh, "sha256").hexdigest()

@@ -1,0 +1,55 @@
+{
+  "case": "pump",
+  "run_id": "c872d82836044884a1b7c1bab0cd93e7",
+  "status": "done",
+  "passed": true,
+  "checks": {
+    "valid_json": true,
+    "hydraulic_power": true,
+    "shaft_power": true,
+    "synthetic_label": true,
+    "source_files": true,
+    "oem_limit_unknown": true,
+    "assumptions_present": true
+  },
+  "usage": {
+    "tokens_used": 18054,
+    "prompt_tokens": 16573,
+    "completion_tokens": 1481,
+    "tokens_max": 40000,
+    "seconds_used": 390.0,
+    "seconds_max": 1200.0,
+    "tool_calls_used": 5,
+    "tool_calls_max": 50,
+    "sandbox_cpu_used": 0.0,
+    "sandbox_cpu_max": 1200
+  },
+  "artifact": "workspace/evaluation-9d256064eb/pump-result.json",
+  "artifact_sha256": "a5745ba66c89c18660f2a760ecf1a77f356debcd8411726edfef611160258003",
+  "final": {
+    "summary": "t1 Produce and check the requested deliverable: Pump power calculations completed and saved to pump-result.json. Hydraulic power: 2.1582 kW, Shaft power: 3.08314285714 kW. Sources: inspection-P101.md, maintenance-procedure.md. Assumptions: water density 1000 kg/m³, pump efficiency 0.70. Synthetic: true. OEM status: OEM limits required; compliance",
+    "artifacts": [
+      {
+        "name": "pump-result.json",
+        "path": "workspace/evaluation-9d256064eb/pump-result.json",
+        "task_id": "t1"
+      }
+    ],
+    "assumptions": [],
+    "unverified": [],
+    "gaps": [],
+    "budget_used": {
+      "tokens_used": 18054,
+      "prompt_tokens": 16573,
+      "completion_tokens": 1481,
+      "tokens_max": 40000,
+      "seconds_used": 390.0,
+      "seconds_max": 1200.0,
+      "tool_calls_used": 5,
+      "tool_calls_max": 50,
+      "sandbox_cpu_used": 0.0,
+      "sandbox_cpu_max": 1200
+    }
+  },
+  "scope": "Synthetic fixture only. No OS egress or general industrial accuracy attestation."
+}

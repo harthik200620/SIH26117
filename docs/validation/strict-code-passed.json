@@ -1,0 +1,71 @@
+{
+  "case": "code",
+  "run_id": "1a7ddc9e30ed428e9692c1ce9b0ba14f",
+  "status": "done",
+  "passed": true,
+  "checks": {
+    "valid_json": true,
+    "sum_of_squares": true,
+    "isolated_python_execution": true
+  },
+  "execution_evidence": {
+    "calls": [
+      {
+        "call_id": "0c88a11349e747eaaa3451917c1084d2",
+        "task_id": "t1",
+        "tool": "python",
+        "status": "done",
+        "result_available": true,
+        "ok": true,
+        "exit_code": 0,
+        "timed_out": false,
+        "backend": "bwrap"
+      }
+    ],
+    "truncated": false
+  },
+  "deployment": {
+    "profile": "portable",
+    "os_isolation_verified": true
+  },
+  "usage": {
+    "tokens_used": 2321,
+    "prompt_tokens": 1855,
+    "completion_tokens": 466,
+    "tokens_max": 40000,
+    "seconds_used": 244.0,
+    "seconds_max": 1200.0,
+    "tool_calls_used": 1,
+    "tool_calls_max": 50,
+    "sandbox_cpu_used": 0.1,
+    "sandbox_cpu_max": 1200.0
+  },
+  "artifact": "<workspace>/result.json",
+  "artifact_sha256": "d2b0b7e95dd2d643db85c67bb545a0fe6de16a5011f16abb3f7cec552aef2daa",
+  "final": {
+    "summary": "t1 Calculate the sum of squares of integers 1 through 10 and write the result to result.json: Python execution succeeded and produced the requested JSON files. Observed output (subject to validation):\nresult.json: {\"sum_of_squares\": 385}",
+    "artifacts": [
+      {
+        "name": "result.json",
+        "path": "<workspace>/result.json",
+        "task_id": "t1"
+      }
+    ],
+    "assumptions": [],
+    "unverified": [],
+    "gaps": [],
+    "budget_used": {
+      "tokens_used": 2321,
+      "prompt_tokens": 1855,
+      "completion_tokens": 466,
+      "tokens_max": 40000,
+      "seconds_used": 244.0,
+      "seconds_max": 1200.0,
+      "tool_calls_used": 1,
+      "tool_calls_max": 50,
+      "sandbox_cpu_used": 0.1,
+      "sandbox_cpu_max": 1200.0
+    }
+  },
+  "scope": "Synthetic fixture only. No OS egress or general industrial accuracy attestation."
+}

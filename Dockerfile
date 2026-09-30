@@ -31,9 +31,9 @@ COPY pyproject.toml README.md ./
 COPY server ./server
 COPY wheelhouse* ./wheelhouse/
 RUN if [ -n "$(ls wheelhouse 2>/dev/null)" ]; then \
-        pip install --no-index --find-links wheelhouse ".[knowledge,vision,render]"; \
+        pip install --no-index --find-links wheelhouse ".[knowledge,vision,render,analysis,ocr]"; \
     else \
-        pip install ".[knowledge,vision,render]"; \
+        pip install ".[knowledge,vision,render,analysis,ocr]"; \
     fi && rm -rf wheelhouse
 
 # Assets the server reads at runtime (agents, knowledge packs, templates, skills, profiles).
@@ -41,7 +41,7 @@ COPY agents ./agents
 COPY knowledge ./knowledge
 COPY templates ./templates
 COPY skills ./skills
-COPY models/registry.yaml models/routing.yaml ./models/
+COPY models/registry.yaml models/routing.yaml models/catalog.json ./models/
 COPY models/profiles ./models/profiles
 COPY tools ./tools
 COPY corpus ./corpus

@@ -323,6 +323,7 @@ class RunStats(Notification):
 
 class RunFinished(Notification):
     method: ClassVar[str] = "run.finished"
+    response_kind: Literal["workflow", "conversation"] = "workflow"
     status: str = "done"
     summary: str = ""
     artifacts: list[dict[str, Any]] = Field(default_factory=list)

@@ -1,0 +1,38 @@
+[
+  [
+    "quantity",
+    "tax",
+    "Unit price",
+    "label",
+    "Net",
+    "Gross",
+    "Within limit"
+  ],
+  [
+    4,
+    0.2,
+    25,
+    "Small",
+    100,
+    120.0,
+    true
+  ],
+  [
+    3,
+    0.05,
+    70,
+    "Large",
+    210,
+    220.5,
+    false
+  ],
+  [
+    0,
+    0.2,
+    10,
+    "Zero",
+    0,
+    0.0,
+    false
+  ]
+]

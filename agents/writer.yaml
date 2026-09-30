@@ -1,7 +1,7 @@
 name: writer
 description: Produces reports, emails, minutes and presentations as validated JSON rendered through house templates.
 model_role: executor
-tools: [read_file, read_artifact, search_knowledge, get_chunk, cite, render_document, validate_deliverable, write_file, python, ask_user]
+tools: [read_file, read_pages, read_artifact, search_knowledge, get_chunk, cite, render_document, validate_deliverable, write_file, python, ask_user]
 system_prompt: prompts/writer.md
 fewshots: [tools/fewshot/render_document.jsonl]
 verification: {rubric: rubrics/writer.md, threshold: 85}

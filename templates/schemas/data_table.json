@@ -17,17 +17,67 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 128,
+            "minItems": 1,
             "title": "Columns",
             "type": "array"
           },
           "rows": {
             "items": {
               "items": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "type": "array"
             },
             "title": "Rows",
+            "type": "array"
+          },
+          "literal_inputs": {
+            "default": false,
+            "title": "Literal Inputs",
+            "type": "boolean"
+          },
+          "computed_columns": {
+            "items": {
+              "properties": {
+                "name": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "expression": {
+                  "maxLength": 1000,
+                  "minLength": 1,
+                  "title": "Expression",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "expression"
+              ],
+              "title": "ComputedColumn",
+              "type": "object"
+            },
+            "maxItems": 127,
+            "title": "Computed Columns",
             "type": "array"
           }
         },
@@ -35,13 +85,50 @@
           "columns",
           "rows"
         ],
-        "title": "TableSpec",
+        "title": "SpreadsheetTable",
         "type": "object"
       },
+      "maxItems": 64,
+      "minItems": 1,
       "title": "Sheets",
       "type": "array"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "appendix": {
+      "properties": {
+        "citations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "unverified_claims": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unverified Claims",
+          "type": "array"
+        }
+      },
+      "title": "Appendix",
+      "type": "object"
     }
   },
+  "required": [
+    "sheets"
+  ],
   "title": "DataTable",
   "type": "object"
 }

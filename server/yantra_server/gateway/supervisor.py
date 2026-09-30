@@ -8,6 +8,7 @@ import itertools
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -49,6 +50,7 @@ class EngineProcess:
     last_error: str | None = None
     last_used: float = field(default_factory=time.monotonic)
     log_file: Path | None = None
+    api_key: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
 
 
 class Supervisor:
@@ -80,6 +82,17 @@ class Supervisor:
                 )
 
     # -------------------------------------------------- integrated engines (machine state)
+
+    def llama_binary(self) -> str | None:
+        configured = os.environ.get("YANTRA_LLAMA_SERVER")
+        if configured:
+            return configured if Path(configured).is_file() else None
+        local = self.config.paths.assets_dir / ".yantra" / "runtime" / "llama"
+        for name in ("llama-server.exe", "llama-server"):
+            for candidate in (local / name, local / "build" / "bin" / name):
+                if candidate.is_file():
+                    return str(candidate)
+        return shutil.which("llama-server")
 
     def _integrated_file(self) -> Path:
         return self.config.paths.data_dir / "integrated_engines.yaml"
@@ -160,7 +173,7 @@ class Supervisor:
             return cmd
         if spec.kind == "llamacpp":
             cmd = [
-                "llama-server",
+                self.llama_binary() or "llama-server",
                 "-m",
                 model_path,
                 "--host",
@@ -174,6 +187,9 @@ class Supervisor:
             ]
             if spec.threads:
                 cmd += ["-t", str(spec.threads)]
+            cmd += ["-ngl", str(spec.gpu_layers), "--parallel", "1", "--jinja"]
+            if spec.mmproj:
+                cmd += ["--mmproj", str(Path(spec.mmproj).resolve())]
             if spec.mode == "embedding" or "--embedding" in manifest.serve_args:
                 cmd += ["--embedding"]
             if spec.mode == "reranking" or "--reranking" in manifest.serve_args:
@@ -183,6 +199,11 @@ class Supervisor:
 
     def environment_for(self, ep: EngineProcess) -> dict[str, str]:
         env = sealed_environment(allowlist=self.config.seal.allowlist)
+        if ep.spec.kind == "llamacpp" and not ep.spec.url:
+            # Keep the per-process key out of commands, manifests and audit logs.
+            env["LLAMA_API_KEY"] = ep.api_key
+            env["LLAMA_ARG_CORS_ORIGINS"] = "http://127.0.0.1"
+            env["LLAMA_ARG_UI"] = "0"
         device = ep.spec.device
         if device.startswith("cuda"):
             ids = device.removeprefix("cuda:") or "0"
@@ -195,7 +216,7 @@ class Supervisor:
         if ep.spec.kind == "vllm":
             return shutil.which("vllm") is not None
         if ep.spec.kind == "llamacpp":
-            return shutil.which("llama-server") is not None
+            return self.llama_binary() is not None
         return True
 
     # ------------------------------------------------------------- lifecycle
@@ -233,6 +254,25 @@ class Supervisor:
         if ep.status in ("starting", "healthy"):
             return
         spec = ep.spec
+        limit = self.config.gateway.max_resident_models
+        if limit > 0 and spec.kind != "mock":
+            resident = sorted(
+                (other for other in self.processes if other is not ep and other.proc is not None),
+                key=lambda other: other.last_used,
+            )
+            incoming = self.registry.get(spec.model or "")
+
+            def parameters(process: EngineProcess) -> float:
+                model = self.registry.get(process.spec.model or "")
+                return model.params_b if model else 0
+
+            while resident and (
+                len(resident) >= limit
+                or sum(parameters(other) for other in resident)
+                + (incoming.params_b if incoming else 0)
+                >= 120
+            ):
+                await self.stop(resident.pop(0))
         with span(
             "engine.start", kind="engine.log", engine_id=spec.id, engine_kind=spec.kind
         ) as sp:
@@ -255,6 +295,10 @@ class Supervisor:
                 sp.set("detail", health.detail or "")
                 return
             if spec.url:
+                if self.config.profile in {"laptop", "portable"}:
+                    from yantra_server.security import local_endpoint
+
+                    local_endpoint(spec.url)
                 # Attach mode (docker-compose): the engine runs in a sibling container;
                 # we only create the client and let the health loop promote it.
                 ep.engine = self._client_for(ep)
@@ -295,6 +339,7 @@ class Supervisor:
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,
                     env=self.environment_for(ep),
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
             except OSError as exc:
                 ep.status = "failed"
@@ -315,7 +360,9 @@ class Supervisor:
         timeout = self.config.gateway.request_timeout_s
         if ep.spec.kind == "vllm":
             return VLLMEngine(base_url, timeout_s=timeout)
-        return LlamaCppEngine(base_url, timeout_s=timeout)
+        return LlamaCppEngine(
+            base_url, timeout_s=timeout, api_key=ep.api_key if not ep.spec.url else None
+        )
 
     async def stop(self, ep: EngineProcess) -> None:
         if ep.proc is not None:
@@ -328,6 +375,9 @@ class Supervisor:
                     ep.proc.kill()
             ep.proc = None
         ep.status = "stopped"
+        if ep.engine is not None and hasattr(ep.engine, "aclose"):
+            await ep.engine.aclose()
+            ep.engine = None
 
     async def stop_all(self) -> None:
         if self._health_task is not None:
@@ -402,7 +452,17 @@ class Supervisor:
 
     def model_available(self, model_id: str) -> bool:
         return any(
-            self._serves(ep, model_id) and (ep.status == "healthy" or ep.spec.on_demand)
+            self._serves(ep, model_id)
+            and (
+                ep.status == "healthy"
+                or (
+                    ep.spec.on_demand
+                    and ep.status not in {"failed", "unavailable"}
+                    and self.binary_available(ep)
+                    and (manifest := self.registry.get(model_id)) is not None
+                    and manifest.resolved_path(self.config.paths.models_dir).exists()
+                )
+            )
             for ep in self.processes
         )
 
@@ -420,13 +480,22 @@ class Supervisor:
                 await self.start(ep)
                 deadline = time.monotonic() + 120
                 while time.monotonic() < deadline and ep.engine is not None:
+                    if ep.proc is not None and ep.proc.poll() is not None:
+                        ep.status = "failed"
+                        ep.last_error = (
+                            f"Model process exited with {ep.proc.returncode}; see {ep.log_file}"
+                        )
+                        break
                     if (await ep.engine.health()).ok:
                         ep.status = "healthy"
                         break
                     await asyncio.sleep(2)
             healthy = [ep for ep in candidates if ep.status == "healthy" and ep.engine is not None]
         if not healthy:
-            detail = "; ".join(f"{ep.spec.id}:{ep.status}" for ep in candidates) or "no engine"
+            detail = (
+                "; ".join(f"{ep.spec.id}:{ep.status} {ep.last_error or ''}" for ep in candidates)
+                or "no engine"
+            )
             raise EngineUnavailable(model_id, detail)
         chosen = healthy[next(self._rr) % len(healthy)]
         chosen.last_used = time.monotonic()

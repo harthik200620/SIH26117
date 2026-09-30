@@ -253,7 +253,9 @@ def _inspect_gguf(path: Path) -> ModelManifest:
         context_len=ctx,
         serve_context_len=min(ctx, 16384) if ctx else 8192,
         vram_gb=0.0,
-        quant=str(meta.get("general.file_type", "")) or "gguf",
+        quant={0: "F32", 1: "F16", 2: "Q4_0", 7: "Q8_0", 15: "Q4_K_M", 17: "Q5_K_M", 18: "Q6_K"}.get(
+            int(meta.get("general.file_type", -1)), str(meta.get("general.file_type", "gguf"))
+        ),
         roles=[],
     )
 

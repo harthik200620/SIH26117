@@ -1,0 +1,12 @@
+{
+  "artifact": "application-fixture.xlsx",
+  "schema_id": "data_table",
+  "template_id": "house",
+  "rendered_at": "2026-09-28T15:20:19.090493+00:00",
+  "run_id": null,
+  "task_id": null,
+  "model_ids": [],
+  "source_document_hashes": [],
+  "audit_head": null,
+  "sha256": "8be658cf2e40694b30b4fdb3bdeca6563e2c1803dab4a9992ff2933a2efab2d1"
+}

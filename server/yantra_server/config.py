@@ -24,6 +24,8 @@ ENV_EXCLUDE = {
     "YANTRA_SEAL_ALLOWLIST",
     "YANTRA_BIND",
     "YANTRA_PROFILE_FILE",
+    "YANTRA_LLAMA_SERVER",
+    "YANTRA_SANDBOX_IMAGE",
 }
 
 Decision = Literal["allow", "ask", "deny"]
@@ -58,6 +60,7 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 7331
     admin_token: str | None = None
+    require_namespace: bool = False
 
 
 class DbConfig(BaseModel):
@@ -66,6 +69,7 @@ class DbConfig(BaseModel):
 
 
 class GatewayConfig(BaseModel):
+    max_resident_models: int = 0
     request_timeout_s: float = 300.0
     max_retries: int = 3
     cache_ttl_s: int = 86400
@@ -99,6 +103,10 @@ class PermissionRule(BaseModel):
 
 
 class KnowledgeConfig(BaseModel):
+    lexical_only: bool = False
+    auto_index_workspace: bool = False
+    local_ocr: bool = True
+    max_ocr_pages: int = Field(default=50, ge=1, le=500)
     collections: list[str] = Field(default_factory=list)
     chunk_tokens_child: int = 400
     chunk_tokens_parent: int = 1200
@@ -163,7 +171,7 @@ class EvalsConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    backend: Literal["auto", "bwrap", "docker", "local"] = "auto"
+    backend: Literal["auto", "bwrap", "docker", "local", "disabled"] = "auto"
     max_seconds: int = 120
     max_seconds_hard: int = 600
     max_rss_mb: int = 4096
@@ -172,6 +180,7 @@ class SandboxConfig(BaseModel):
 
 
 class ExecutionConfig(BaseModel):
+    compact_planning: bool = False
     max_parallel_tasks: int = 2
     max_steps_per_task: int = 30
     max_task_retries: int = 3

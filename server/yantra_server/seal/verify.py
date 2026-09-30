@@ -64,6 +64,10 @@ NODE_NET_PROBE = (
 async def run_verification(state: AppState) -> SealReport:
     report = SealReport()
     config = state.config
+    from yantra_server.seal.namespace import isolation_evidence
+
+    namespace = isolation_evidence()
+    report.add("os_network_namespace", bool(namespace["verified"]), json.dumps(namespace))
 
     # 1. environment lock
     problems = assert_environment_locked()

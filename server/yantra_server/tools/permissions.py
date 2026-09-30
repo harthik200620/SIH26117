@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import hashlib
+import json
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -44,7 +47,7 @@ class PermissionPolicy:
                 reason=self._describe(rule),
             )
         return PolicyDecision(
-            decision="ask" if mode == "ask" else "deny",
+            decision="ask" if mode in {"ask", "auto"} else "deny",
             rule=None,
             reason="no rule matched (safe default)",
         )
@@ -107,10 +110,19 @@ class PermissionBroker:
         self.audit = audit
         self.prompt_timeout_s = prompt_timeout_s
         self._pending: dict[str, asyncio.Future[tuple[str, str | None]]] = {}
+        self._pending_details: dict[str, dict[str, Any]] = {}
         self._session_grants: dict[str, set[str]] = {}  # run_id -> {grant keys}
 
-    def _grant_key(self, tool: Tool, rule: PermissionRule | None) -> str:
-        return f"{tool.name}|{rule.model_dump_json() if rule else '-'}"
+    def _grant_key(self, tool: Tool, rule: PermissionRule | None, args: dict[str, Any]) -> str:
+        scope = json.dumps(args, sort_keys=True, ensure_ascii=False)
+        digest = hashlib.sha256(scope.encode()).hexdigest()
+        return f"{tool.name}|{rule.model_dump_json() if rule else '-'}|{digest}"
+
+    def pending_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._pending_details.values() if item["run_id"] == run_id]
+
+    def revoke_run(self, run_id: str) -> None:
+        self._session_grants.pop(run_id, None)
 
     async def check(
         self,
@@ -133,7 +145,7 @@ class PermissionBroker:
         outcome = decision.decision
         if outcome == "ask":
             grants = self._session_grants.get(run_id or "", set())
-            if self._grant_key(tool, decision.rule) in grants:
+            if self._grant_key(tool, decision.rule, args) in grants:
                 outcome, record["by"], record["decision"] = "allow", "session_grant", "allow"
             else:
                 outcome = await self._prompt_user(tool, args, decision, run_id, explanation)
@@ -156,13 +168,22 @@ class PermissionBroker:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[tuple[str, str | None]] = loop.create_future()
         self._pending[request_id] = future
+        self._pending_details[request_id] = {
+            "request_id": request_id,
+            "run_id": run_id,
+            "tool": tool.name,
+            "args": args,
+            "reason": decision.reason,
+            "risk": tool.risk,
+            "expires_at": time.time() + self.prompt_timeout_s,
+        }
         with span("permission.prompt", tool=tool.name, request_id=request_id) as sp:
             self.bus.publish(
                 PermissionRequest(
                     run_id=run_id,
                     request_id=request_id,
                     tool=tool.name,
-                    args=_redact_args(args),
+                    args=args,
                     rule={"reason": decision.reason, "risk": tool.risk},
                     explanation=explanation,
                 )
@@ -174,17 +195,24 @@ class PermissionBroker:
                 return "deny"
             finally:
                 self._pending.pop(request_id, None)
+                self._pending_details.pop(request_id, None)
             sp.set("outcome", answer)
             if answer == "always":
                 self._session_grants.setdefault(run_id or "", set()).add(
-                    self._grant_key(tool, decision.rule)
+                    self._grant_key(tool, decision.rule, args)
                 )
                 return "allow"
             return "allow" if answer == "once" else "deny"
 
-    def resolve(self, request_id: str, decision: str, note: str | None = None) -> bool:
+    def resolve(
+        self, request_id: str, decision: str, note: str | None = None, *, run_id: str | None = None
+    ) -> bool:
         """Called by the run.approve RPC handler."""
         future = self._pending.get(request_id)
+        if decision not in {"once", "always", "deny"}:
+            return False
+        if run_id is not None and self._pending_details.get(request_id, {}).get("run_id") != run_id:
+            return False
         if future is None or future.done():
             return False
         future.set_result((decision, note))
@@ -220,11 +248,3 @@ class PermissionBroker:
                 **{k: v for k, v in record.items() if k != "rule"},
             },
         )
-
-
-def _redact_args(args: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for key, value in args.items():
-        text = str(value)
-        out[key] = text if len(text) <= 400 else text[:400] + "…"
-    return out

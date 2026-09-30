@@ -25,12 +25,16 @@ from .harness import AskUserTool, DelegateTool
 
 
 def register_builtin_tools(registry: ToolRegistry) -> ToolRegistry:
+    from .calculator import CalculateTool
     from .knowledge import register_knowledge_tools
     from .memory import register_memory_tools
+    from .quantities import CalculateQuantityTool
     from .render import register_render_tools
     from .vision import register_vision_tools
 
     for tool in (
+        CalculateTool(),
+        CalculateQuantityTool(),
         ListDirTool(),
         ReadFileTool(),
         WriteFileTool(),

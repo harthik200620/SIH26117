@@ -1,0 +1,5 @@
+{
+  "passed": false,
+  "backend": "docker",
+  "error": "Backend is not installed; no fallback was used"
+}

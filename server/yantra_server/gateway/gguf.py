@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -72,8 +73,10 @@ def read_gguf_metadata(
         (version,) = struct.unpack("<I", _read(fh, 4))
         if version < 2:
             raise GGUFError(f"unsupported GGUF version {version}")
-        struct.unpack("<Q", _read(fh, 8))  # tensor count (unused)
+        (tensor_count,) = struct.unpack("<Q", _read(fh, 8))
         (kv_count,) = struct.unpack("<Q", _read(fh, 8))
+        if tensor_count > 1_000_000 or kv_count > 1_000_000:
+            raise GGUFError("Implausible GGUF header counts")
         meta: dict[str, Any] = {"gguf.version": version}
         for _ in range(int(kv_count)):
             key = _read_string(fh)
@@ -81,4 +84,16 @@ def read_gguf_metadata(
             value = _read_value(fh, vtype)
             if not wanted_prefixes or any(key.startswith(p) for p in wanted_prefixes):
                 meta[key] = value
+        # Count stored tensor elements, rather than infer parameters from quantized bytes.
+        parameters = 0
+        for _ in range(tensor_count):
+            _read_string(fh)
+            (dimensions,) = struct.unpack("<I", _read(fh, 4))
+            if not 1 <= dimensions <= 4:
+                raise GGUFError("Invalid tensor dimensions")
+            shape = struct.unpack("<" + "Q" * dimensions, _read(fh, 8 * dimensions))
+            parameters += math.prod(shape)
+            _read(fh, 12)  # ggml type and data offset
+        if tensor_count:
+            meta["general.parameter_count"] = parameters
         return meta

@@ -27,6 +27,15 @@ def test_allowlist_parsing() -> None:
     assert parse_allowlist(None)  # defaults
 
 
+def test_application_access_key_never_reaches_model_children(monkeypatch) -> None:
+    monkeypatch.setenv("YANTRA_SERVER__ADMIN_TOKEN", "synthetic-key")
+    seal_env.apply_seal_env_to_current_process()
+    import os
+
+    assert os.environ["YANTRA_SERVER__ADMIN_TOKEN"] == "synthetic-key"
+    assert "YANTRA_SERVER__ADMIN_TOKEN" not in seal_env.sealed_environment()
+
+
 def test_guard_blocks_public_connect(clean_guard: None) -> None:
     install(allowlist=["127.0.0.0/8", "::1/128"])
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s, pytest.raises(SealViolation):

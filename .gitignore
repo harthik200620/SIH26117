@@ -41,6 +41,12 @@ YANTRA_BUILD_PROMPT.md
 HOW_TO_RUN_THE_BUILD.md
 models/weights/
 
+# Operator documents and generated work stay local. Only synthetic fixtures ship.
+/workspace/*
+!/workspace/inspection-P101.md
+!/workspace/maintenance-procedure.md
+/wheelhouse/
+
 # Not shipped: the build specification stays local; compiled TS siblings are build output
 docs/SPEC.md
 web/src/**/*.js

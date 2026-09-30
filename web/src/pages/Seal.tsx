@@ -3,10 +3,10 @@ import { getJson, postJson, type SealStatus } from "../api.js";
 import { Card, Empty, Page, Pill, Section } from "../components.js";
 
 const LAYER_LABEL: Record<string, string> = {
-  bundle_verified: "Build hermeticity",
+  bundle_verified: "Bundle verification (not attested)",
   env_locked: "Environment lock",
   socket_guard_active: "Process socket guard",
-  compose_internal: "Network isolation",
+  compose_internal: "Container isolation (not attested)",
   nftables_present: "Host firewall",
 };
 
@@ -36,14 +36,14 @@ export function SealPage(): React.ReactElement {
     }
   };
 
-  if (error && !status) return <Page title="Seal Monitor"><Empty glyph="◈" title="Server unreachable" hint={error} /></Page>;
-  if (!status) return <Page title="Seal Monitor"><div className="muted">Loading…</div></Page>;
+  if (error && !status) return <Page title="Network & privacy"><Empty glyph="◈" title="Server unreachable" hint={error} /></Page>;
+  if (!status) return <Page title="Network & privacy"><div className="muted">Loading…</div></Page>;
 
   const blocked = status.blocked_attempts_total;
   return (
     <Page
-      title="Seal Monitor"
-      desc="Zero-egress guarantee: every layer, every blocked attempt, continuously."
+      title="Network & privacy"
+      desc="Inspect observed controls and blocked attempts. An application guard alone does not prove operating-system isolation."
       actions={
         <button className="primary" onClick={runVerify} disabled={verifying}>
           {verifying ? "Verifying…" : "Run verification"}
@@ -55,7 +55,7 @@ export function SealPage(): React.ReactElement {
           <div className={`seal-glyph ${status.sealed ? "ok" : "bad"}`}>{status.sealed ? "🔒" : "⚠"}</div>
           <div style={{ flex: 1 }}>
             <div className="seal-title" style={{ color: status.sealed ? "var(--ok)" : "var(--warn)" }}>
-              {status.sealed ? "Sealed" : "Unsealed — development mode"}
+              {status.sealed ? "Offline policy enabled" : "Unsealed — development mode"}
             </div>
             <div className="seal-sub">
               {blocked} egress attempt{blocked === 1 ? "" : "s"} blocked · allowlist {status.allowlist.join(", ")}
@@ -64,19 +64,20 @@ export function SealPage(): React.ReactElement {
         </div>
       </Card>
 
+      {status.network_isolation && <Card><h3>OS network isolation</h3><Pill tone={status.network_isolation.verified ? "ok" : "warn"}>{status.network_isolation.verified ? "Namespace checks passed" : "Not verified"}</Pill>{status.network_isolation.verified && <><p>{status.network_isolation.scope}</p><p className="mono">Kernel: {status.network_isolation.kernel}</p><p>Native child: {status.network_isolation.child?.verified ? "passed" : "not verified"} · Packet capture: {status.network_isolation.packet_capture}</p><ul>{status.network_isolation.probes?.map(p => <li key={p.name}>{p.name.replaceAll("_", " ")}: {p.blocked ? "blocked by kernel" : "failed"}</li>)}</ul></>}</Card>}
       <Section>Defence layers</Section>
       <div className="layers">
         {Object.entries(status.layers).map(([layer, ok]) => (
           <div className="layer" key={layer}>
             <span>{LAYER_LABEL[layer] ?? layer.replace(/_/g, " ")}</span>
-            <Pill tone={ok ? "ok" : "neutral"}>{ok ? "active" : "n/a"}</Pill>
+            <Pill tone={ok ? "ok" : "warn"}>{ok ? "observed" : "not attested"}</Pill>
           </div>
         ))}
       </div>
 
       <Section>Blocked attempts</Section>
       {status.last_attempts.length === 0 ? (
-        <Empty glyph="✓" title="Nothing has tried to leave" hint="Every outbound attempt would appear here with its process and stack." />
+        <Empty glyph="◈" title="No blocked attempts recorded" hint="This log covers instrumented processes. Absence of events is not proof of zero network traffic; verify the host firewall and collect packet evidence." />
       ) : (
         <Card pad={false}>
           <div className="table-wrap">

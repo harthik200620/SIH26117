@@ -43,6 +43,7 @@ class OpenAICompatEngine(Engine):
         base_url: str,
         *,
         timeout_s: float = 300.0,
+        api_key: str | None = None,
         capabilities: Capabilities | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -51,6 +52,9 @@ class OpenAICompatEngine(Engine):
         )
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
+            trust_env=False,
+            follow_redirects=False,
+            headers={"Authorization": "Bearer " + api_key} if api_key else {},
             timeout=httpx.Timeout(connect=10.0, read=timeout_s, write=30.0, pool=timeout_s),
         )
 

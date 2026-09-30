@@ -11,6 +11,7 @@ import logging
 import re
 from email import policy
 from pathlib import Path
+from typing import Any
 
 from ..types import Block, ParsedDocument, ParsedPage
 
@@ -183,17 +184,62 @@ def _parse_pptx(path: Path) -> ParsedDocument:
     presentation = pptx.Presentation(str(path))
     doc = ParsedDocument(title=_title_from(path), doc_type="pptx")
     for index, slide in enumerate(presentation.slides, 1):
-        texts: list[str] = []
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    line = "".join(run.text for run in para.runs).strip()
-                    if line:
-                        texts.append(line)
+        blocks: list[Block] = []
+
+        def visit(
+            shapes: Any, page: int, target: list[Block], ancestors: tuple[str, ...] = ()
+        ) -> None:
+            # Grouped tables/text remain evidence on the enclosing slide.
+            for shape in shapes:
+                location = (*ancestors, shape.name)
+                if hasattr(shape, "shapes"):
+                    visit(shape.shapes, page, target, location)
+                    continue
+                section = f"Slide {page} / " + " / ".join(location)
+                if shape.has_table:
+                    table = shape.table
+                    rows = [
+                        ["" if cell.is_spanned else cell.text for cell in row.cells]
+                        for row in table.rows
+                    ]
+                    text = "\n".join(
+                        " | ".join(re.sub(r"\s+", " ", value).strip() for value in row)
+                        for row in rows
+                    )
+                    if any(value.strip() for row in rows for value in row):
+                        target.append(
+                            Block(
+                                text=text,
+                                kind="table",
+                                page=page,
+                                section_path=section,
+                                meta={
+                                    "slide": page,
+                                    "shape_id": shape.shape_id,
+                                    "rows": rows,
+                                    "header_row": bool(table.first_row),
+                                    "merged_cells": [
+                                        {"row": r + 1, "column": c + 1,
+                                         "row_span": cell.span_height,
+                                         "column_span": cell.span_width}
+                                        for r, row in enumerate(table.rows)
+                                        for c, cell in enumerate(row.cells)
+                                        if cell.is_merge_origin
+                                    ],
+                                },
+                            )
+                        )
+                elif shape.has_text_frame:
+                    text = "\n".join(
+                        para.text.strip() for para in shape.text_frame.paragraphs
+                        if para.text.strip()
+                    )
+                    if text:
+                        target.append(Block(text=text, page=page, section_path=section))
+
+        visit(slide.shapes, index, blocks)
         doc.pages.append(
-            ParsedPage(
-                page_no=index, blocks=[Block(text="\n".join(texts), page=index)] if texts else []
-            )
+            ParsedPage(page_no=index, blocks=blocks)
         )
     return doc
 

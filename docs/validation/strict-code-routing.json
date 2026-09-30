@@ -1,0 +1,47 @@
+{
+  "run_id": "1a7ddc9e30ed428e9692c1ce9b0ba14f",
+  "routes": [
+    {
+      "name": "llm.call",
+      "metadata": {
+        "role": "planner",
+        "model": "qwen3-4b-instruct-awq-gguf",
+        "tokens": {
+          "prompt_tokens": 228,
+          "completion_tokens": 115,
+          "cached_prefix_tokens": 0,
+          "reasoning_tokens": 0
+        },
+        "tokens_per_s": 6.9
+      }
+    },
+    {
+      "name": "llm.call",
+      "metadata": {
+        "role": "executor",
+        "model": "qwen2.5-1.5b-instruct-gguf",
+        "tokens": {
+          "prompt_tokens": 783,
+          "completion_tokens": 164,
+          "cached_prefix_tokens": 0,
+          "reasoning_tokens": 0
+        },
+        "tokens_per_s": 13.1
+      }
+    },
+    {
+      "name": "llm.call",
+      "metadata": {
+        "role": "reviewer",
+        "model": "qwen3-4b-instruct-awq-gguf",
+        "tokens": {
+          "prompt_tokens": 844,
+          "completion_tokens": 187,
+          "cached_prefix_tokens": 0,
+          "reasoning_tokens": 0
+        },
+        "tokens_per_s": 4.6
+      }
+    }
+  ]
+}

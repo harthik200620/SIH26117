@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from yantra_server.protocol.jsonrpc import (
 from yantra_server.protocol.messages import Notification
 
 if TYPE_CHECKING:
+    from yantra_server.db.base import Database
     from yantra_server.state import AppState
 
 log = logging.getLogger(__name__)
@@ -50,7 +52,9 @@ class Connection:
 class EventBus:
     """Per-run monotonic sequence numbers + replay ring, fan-out to live connections."""
 
-    def __init__(self) -> None:
+    def __init__(self, db: Database | None = None) -> None:
+        self._db = db
+        self._publish_lock = threading.Lock()
         self._connections: dict[str, Connection] = {}
         self._rings: dict[str, deque[dict[str, Any]]] = {}
         self._seqs: dict[str, int] = {}
@@ -67,13 +71,34 @@ class EventBus:
 
     def publish(self, note: Notification) -> None:
         run_id = note.run_id or "_global"
-        seq = self._seqs.get(run_id, 0) + 1
-        self._seqs[run_id] = seq
-        note.seq = seq
-        frame = notification_frame(type(note).method, note.model_dump(mode="json"))
-        self._rings.setdefault(run_id, deque(maxlen=RING_SIZE)).append(frame)
+        with self._publish_lock:
+            seq = self.latest_seq(run_id) + 1
+            note.seq = seq
+            frame = notification_frame(type(note).method, note.model_dump(mode="json"))
+            if self._db is not None and note.run_id:
+                from yantra_server.db.models import RunEventRow
+
+                with self._db.session() as session:
+                    session.add(RunEventRow(run_id=run_id, seq=seq, frame=frame))
+            self._seqs[run_id] = seq
+            self._rings.setdefault(run_id, deque(maxlen=RING_SIZE)).append(frame)
         for conn in list(self._connections.values()):
             conn.try_send(frame)
+
+    def latest_seq(self, run_id: str) -> int:
+        if run_id not in self._seqs and self._db is not None:
+            from sqlalchemy import func, select
+
+            from yantra_server.db.models import RunEventRow
+
+            with self._db.session() as session:
+                self._seqs[run_id] = (
+                    session.scalar(
+                        select(func.max(RunEventRow.seq)).where(RunEventRow.run_id == run_id)
+                    )
+                    or 0
+                )
+        return self._seqs.get(run_id, 0)
 
     def publish_threadsafe(self, note: Notification) -> None:
         if self._loop is None or self._loop.is_closed():
@@ -81,6 +106,20 @@ class EventBus:
         self._loop.call_soon_threadsafe(self.publish, note)
 
     def replay(self, run_id: str, after_seq: int) -> list[dict[str, Any]]:
+        if self._db is not None:
+            from sqlalchemy import select
+
+            from yantra_server.db.models import RunEventRow
+
+            with self._db.session() as session:
+                return list(
+                    session.scalars(
+                        select(RunEventRow.frame)
+                        .where(RunEventRow.run_id == run_id, RunEventRow.seq > after_seq)
+                        .order_by(RunEventRow.seq)
+                        .limit(RING_SIZE)
+                    )
+                )
         ring = self._rings.get(run_id)
         if not ring:
             return []

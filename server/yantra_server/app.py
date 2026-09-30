@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,12 +43,15 @@ def build_state(loaded: LoadedConfig) -> AppState:
     """Wire the object graph: DB, artifacts, audit, tracing, and the inference plane."""
     config = loaded.config
     config.paths.data_dir.mkdir(parents=True, exist_ok=True)
+    from yantra_server.workspaces import WorkspaceFolders
+
+    workspace_folders = WorkspaceFolders(config.paths.data_dir, config.paths.workspace_roots)
     db = Database(config.db_url(), echo=config.db.echo)
     upgrade_to_head(config.db_url())
     artifacts = ArtifactStore(db, config.paths.data_dir / "artifacts")
     configure_tracing(db, artifacts)
     audit = AuditChain(db)
-    bus = EventBus()
+    bus = EventBus(db)
 
     registry_file = config.gateway.registry_file
     if not registry_file.is_absolute():
@@ -65,8 +67,9 @@ def build_state(loaded: LoadedConfig) -> AppState:
     routing_file = config.gateway.routing_file
     if not routing_file.is_absolute():
         routing_file = loaded.assets_dir / routing_file
-    allow_mock = config.profile == "mock" or not config.sealed()
+    allow_mock = config.profile == "mock"
     routing_policy = RoutingPolicy.load(routing_file)
+    routing_policy.apply_local_overlay(config.paths.data_dir / "routing.generated.yaml")
     routing_policy.apply_local_overlay(config.paths.data_dir / "routing.local.yaml")
     router = Router(
         routing_policy,
@@ -80,7 +83,9 @@ def build_state(loaded: LoadedConfig) -> AppState:
         artifacts,
         router,
         supervisor,
-        max_concurrent=int(profile_spec.concurrency.get("interactive_sessions", 4)) * 2,
+        max_concurrent=1
+        if config.gateway.max_resident_models > 0
+        else int(profile_spec.concurrency.get("interactive_sessions", 4)) * 2,
     )
 
     from yantra_server.state import ToolsBundle
@@ -113,6 +118,7 @@ def build_state(loaded: LoadedConfig) -> AppState:
         gateway=gateway,
         tools=tools,
     )
+    state.extras["workspace_folders"] = workspace_folders
 
     from yantra_server.agents import AgentRoster
     from yantra_server.conductor.service import Conductor
@@ -120,6 +126,7 @@ def build_state(loaded: LoadedConfig) -> AppState:
     roster = AgentRoster(loaded.assets_dir / "agents")
     state.conductor = Conductor(state=state, roster=roster)
     state.extras["roster"] = roster
+    gateway.run_models = state.extras.setdefault("run_models", {})
 
     from yantra_server.observe.seal_monitor import SealMonitor
 
@@ -157,12 +164,29 @@ def _auto_roles(manifest: Any) -> list[str]:
 
 
 def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
+    from yantra_server.instance import InstanceLock
+
     loaded = loaded or load_config()
-    state = build_state(loaded)
+    loaded.config.paths.data_dir.mkdir(parents=True, exist_ok=True)
+    ownership = InstanceLock(loaded.config.paths.data_dir)
+    ownership.acquire()
+    try:
+        state = build_state(loaded)
+    finally:
+        ownership.release()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> Any:
+    async def running(app: FastAPI) -> Any:
+        if state.config.server.require_namespace:
+            from yantra_server.seal.namespace import check_with_child
+
+            evidence = check_with_child()
+            if not evidence["verified"]:
+                raise RuntimeError("Required OS network namespace isolation could not be verified")
+            state.extras["network_isolation"] = evidence
+            state.audit.append("system", "isolation.verified", evidence)
         state.bus.bind_loop(asyncio.get_running_loop())
+        state.conductor.reconcile_interrupted()
         # Layer 3: install the socket guard in the server process, reporting to the monitor.
         from yantra_server.seal.socket_guard import install as install_guard
 
@@ -182,16 +206,63 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
         if wired:
             await wired(state)
         yield
+        drivers = [active.driver for active in state.conductor._active.values()]
+        for driver in drivers:
+            driver.cancel()
+        await asyncio.gather(*drivers, return_exceptions=True)
         if state.seal_monitor is not None:
             await state.seal_monitor.stop()
         await state.tools.mcp.stop_all()
         await state.supervisor.stop_all()
+        if state.knowledge is not None:
+            state.knowledge.close()
         state.audit.append("system", "server.stop", {})
         shutdown_tracing()
         state.db.dispose()
 
-    app = FastAPI(title="yantra-server", version=__version__, lifespan=lifespan)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> Any:
+        ownership.acquire()
+        try:
+            async with running(app):
+                yield
+        finally:
+            ownership.release()
+
+    app = FastAPI(title="BlackBox Workspace", version=__version__, lifespan=lifespan)
     app.state.yantra = state
+    from yantra_server.security import LocalBoundaryMiddleware
+    from yantra_server.workbench import workbench_router
+
+    app.add_middleware(LocalBoundaryMiddleware, token=state.config.server.admin_token)
+    app.include_router(workbench_router(state))
+
+    @app.post("/auth/login")
+    async def login(body: dict[str, str]) -> JSONResponse:
+        import hmac
+
+        from yantra_server.security import issue_session
+
+        expected = state.config.server.admin_token
+        supplied = body.get("token", "")
+        if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            return JSONResponse({"error": "Invalid access key"}, status_code=403)
+        response = JSONResponse({"ok": True})
+        response.set_cookie(
+            "yantra_session",
+            issue_session(expected),
+            httponly=True,
+            samesite="strict",
+            max_age=8 * 3600,
+            path="/",
+        )
+        return response
+
+    @app.post("/auth/logout")
+    async def logout() -> JSONResponse:
+        response = JSONResponse({"ok": True})
+        response.delete_cookie("yantra_session", path="/")
+        return response
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -200,13 +271,16 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
             "version": __version__,
             "profile": state.config.profile,
             "sealed": state.config.sealed(),
+            "network_isolation": state.extras.get("network_isolation", {"verified": False}),
             "db": "postgres" if state.db.url.startswith("postgres") else "sqlite",
         }
 
     @app.get("/api/seal")
     async def seal() -> Any:
         if state.seal_monitor is not None:
-            return state.seal_monitor.status()
+            report = state.seal_monitor.status()
+            report["network_isolation"] = state.extras.get("network_isolation", {"verified": False})
+            return report
         from yantra_server.protocol import messages as msg
 
         return await handlers.seal_status(state, Connection(id="http"), msg.SealStatusParams())
@@ -358,7 +432,8 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
             "data_dir": str(state.config.paths.data_dir),
             "models_dir": str(state.config.paths.models_dir),
             "entries": [
-                {"key": k, "value": v, "source": s} for k, v, s in effective_report(loaded)
+                {"key": k, "value": "***" if "token" in k else v, "source": s}
+                for k, v, s in effective_report(loaded)
             ],
         }
 
@@ -438,7 +513,7 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
         candidates = await asyncio.to_thread(scan)
         return {
             "candidates": candidates,
-            "llamacpp_available": shutil.which("llama-server") is not None,
+            "llamacpp_available": state.supervisor.llama_binary() is not None,
         }
 
     @app.get("/api/routing/assignments")
@@ -459,20 +534,24 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
             inspect_model_path,
         )
 
+        if state.conductor._active:
+            return JSONResponse(
+                {"error": "Finish the current workflow before changing models"}, status_code=409
+            )
         raw_path = str(body.get("path", "")).strip()
         if not raw_path:
             return JSONResponse({"error": "path is required"}, status_code=400)
         try:
-            manifest = inspect_model_path(Path(raw_path))
+            if raw_path.startswith(("\\\\", "//")):
+                raise RegistryError("Network model paths are not permitted")
+            manifest = await asyncio.to_thread(inspect_model_path, Path(raw_path))
         except RegistryError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         if name := str(body.get("name", "")).strip():
             manifest.id = name
         manifest.roles = [str(r) for r in body.get("roles") or _auto_roles(manifest)]
         try:
-            state.registry.register(
-                manifest, allow_large=bool(body.get("allow_large", False)), local=True
-            )
+            state.registry.register(manifest, allow_large=False, local=True)
         except LargeModelRefused as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         state.registry.save()
@@ -496,6 +575,8 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
                 model=manifest.id,
                 device="cpu" if manifest.engine == "llamacpp" else "auto",
                 ctx=min(manifest.serve_context_len or 8192, 8192),
+                threads=min(8, __import__("os").cpu_count() or 4),
+                on_demand=state.config.profile in {"laptop", "portable"},
             )
             ep = await state.supervisor.add_engine(spec)
             state.supervisor.persist_integrated(spec)  # survives server restarts
@@ -534,7 +615,8 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
                     "system", "models.autoprobe", {"model": model_id, "probes": probes}
                 )
 
-            asyncio.get_running_loop().create_task(probe_when_healthy())
+            if state.config.profile not in {"laptop", "portable"}:
+                asyncio.get_running_loop().create_task(probe_when_healthy())
         state.audit.append(
             "user",
             "models.integrate",
@@ -559,12 +641,15 @@ def create_app(loaded: LoadedConfig | None = None) -> FastAPI:
         goal = str(body.get("goal", "")).strip()
         if not goal:
             return JSONResponse({"error": "goal is required"}, status_code=400)
+        from yantra_server.security import workspace_path
+
         workspace = str(body.get("workspace", "")).strip()
-        if workspace:
-            ws = Path(workspace).expanduser()  # noqa: ASYNC240 - no I/O, just path parsing
-        else:
-            ws = state.config.paths.data_dir / "console-runs" / uuid.uuid4().hex[:8]
-        await asyncio.to_thread(ws.mkdir, parents=True, exist_ok=True)
+        if not workspace and state.config.paths.workspace_roots:
+            workspace = str(state.config.paths.workspace_roots[0])
+        try:
+            ws = workspace_path(workspace, state.config.paths.workspace_roots)
+        except (ValueError, OSError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         with state.db.session() as s:
             session = SessionRow(
                 workspace_path=str(ws), collections=[], mode="auto", title="console"

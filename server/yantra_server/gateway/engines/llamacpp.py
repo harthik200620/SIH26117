@@ -15,10 +15,13 @@ from .openai_compat import OpenAICompatEngine
 class LlamaCppEngine(OpenAICompatEngine):
     name = "llamacpp"
 
-    def __init__(self, base_url: str, *, timeout_s: float = 300.0) -> None:
+    def __init__(
+        self, base_url: str, *, timeout_s: float = 300.0, api_key: str | None = None
+    ) -> None:
         super().__init__(
             base_url,
             timeout_s=timeout_s,
+            api_key=api_key,
             capabilities=Capabilities(
                 chat=True, embeddings=True, rerank=True, vision=False, tools=True, structured=True
             ),
@@ -26,6 +29,11 @@ class LlamaCppEngine(OpenAICompatEngine):
 
     def structured_fields(self, request: EngineChatRequest) -> dict[str, Any]:
         return llamacpp_structured_fields(request.constraint)
+
+    def extra_chat_fields(self, request: EngineChatRequest) -> dict[str, Any]:
+        if request.constraint is not None:
+            return {"chat_template_kwargs": {"enable_thinking": False}}
+        return {}
 
     async def health(self) -> EngineHealth:
         # llama-server exposes /health with loading states; fall back to /v1/models.

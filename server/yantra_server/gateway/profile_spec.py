@@ -27,6 +27,8 @@ class EngineSpec(BaseModel):
     replicas: int = 1
     threads: int | None = None
     ctx: int | None = None
+    gpu_layers: int = 0
+    mmproj: str | None = None
     mode: Literal["chat", "embedding", "reranking"] | None = None
     on_demand: bool = False
     vram_fraction: float | None = None

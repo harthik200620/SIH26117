@@ -62,6 +62,10 @@ export interface ModelInfo {
   healthy?: boolean | null;
   vram_gb?: number;
   quant?: null | string;
+  local?: boolean;
+  path?: null | string;
+  probes_passed?: null | number;
+  probes_total?: null | number;
 }
 
 export interface ModelsAddParams {
@@ -135,6 +139,7 @@ export interface RunCancelParams {
 export interface RunFinished {
   run_id?: null | string;
   seq?: number;
+  response_kind?: "workflow" | "conversation";
   status?: string;
   summary?: string;
   artifacts?: Record<string, unknown>[];

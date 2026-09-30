@@ -1,0 +1,50 @@
+{
+  "case": "exact",
+  "run_id": "b07de9266e2844fca26d23e826af210f",
+  "status": "done",
+  "passed": true,
+  "checks": {
+    "file_exists": true,
+    "exact_bytes": true
+  },
+  "usage": {
+    "tokens_used": 678,
+    "prompt_tokens": 603,
+    "completion_tokens": 75,
+    "tokens_max": 40000,
+    "seconds_used": 32.2,
+    "seconds_max": 1200.0,
+    "tool_calls_used": 1,
+    "tool_calls_max": 50,
+    "sandbox_cpu_used": 0.0,
+    "sandbox_cpu_max": 1200.0
+  },
+  "artifact": "evaluation-31c6398363/verification.txt",
+  "artifact_sha256": "60264a9c550a79b031f3142a4428d094275f5455bd4da4f71257b67246b9f4f0",
+  "final": {
+    "summary": "t1 Write the requested file: Wrote verification.txt; all 17 requested UTF-8 bytes match exactly.",
+    "artifacts": [
+      {
+        "name": "verification.txt",
+        "path": "evaluation-31c6398363/verification.txt",
+        "task_id": "t1"
+      }
+    ],
+    "assumptions": [],
+    "unverified": [],
+    "gaps": [],
+    "budget_used": {
+      "tokens_used": 678,
+      "prompt_tokens": 603,
+      "completion_tokens": 75,
+      "tokens_max": 40000,
+      "seconds_used": 32.1,
+      "seconds_max": 1200.0,
+      "tool_calls_used": 1,
+      "tool_calls_max": 50,
+      "sandbox_cpu_used": 0.0,
+      "sandbox_cpu_max": 1200.0
+    }
+  },
+  "scope": "Synthetic fixture only. No OS egress or general industrial accuracy attestation."
+}

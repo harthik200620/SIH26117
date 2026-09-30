@@ -2,7 +2,7 @@
 
 export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.detail ?? body.error ?? `HTTP ${res.status}`); }
   return (await res.json()) as T;
 }
 
@@ -12,11 +12,12 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.detail ?? body.error ?? `HTTP ${res.status}`); }
   return (await res.json()) as T;
 }
 
 export interface SealStatus {
+  network_isolation?: { verified: boolean; kernel?: string; scope?: string; probes?: { name: string; blocked: boolean; errno: number }[]; child?: { verified: boolean }; packet_capture?: string };
   sealed: boolean;
   allowlist: string[];
   blocked_attempts_total: number;

@@ -1,0 +1,17 @@
+[
+  {
+    "pid": 502,
+    "name": "bwrap",
+    "network_namespace": "net:[4026532306]"
+  },
+  {
+    "pid": 504,
+    "name": "python",
+    "network_namespace": "net:[4026532306]"
+  },
+  {
+    "pid": 603,
+    "name": "llama-server",
+    "network_namespace": "net:[4026532306]"
+  }
+]

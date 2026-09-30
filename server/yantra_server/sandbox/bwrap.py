@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 from .base import OutputCallback, Sandbox, SandboxLimits, SandboxResult, drain_process, now
@@ -25,6 +27,9 @@ def bwrap_command(
         "--unshare-all",
         "--unshare-net",
         "--die-with-parent",
+        "--new-session",
+        "--cap-drop",
+        "ALL",
         "--clearenv",
         "--setenv",
         "HOME",
@@ -68,6 +73,9 @@ def bwrap_command(
     ]
     venv = Path(sys.prefix)
     cmd += ["--ro-bind", str(venv), str(venv)]
+    base = Path(sys.base_prefix)
+    if base != venv and not base.is_relative_to(Path("/usr")):
+        cmd += ["--ro-bind", str(base), str(base)]
     for extra in extra_ro_binds or []:
         cmd += ["--ro-bind-try", str(extra), str(extra)]
     cmd += ["--bind", str(workspace), "/work"]
@@ -83,7 +91,13 @@ def bwrap_command(
     except ValueError:
         pass
     cmd += ["--chdir", rel_cwd]
-    cmd += ["--", *argv]
+    from .docker import container_argv
+
+    translated = container_argv(argv, workspace)
+    # bubblewrap binds the host interpreter environment read-only at its original path.
+    if argv and argv[0] == sys.executable:
+        translated[0] = sys.executable
+    cmd += ["--", *translated]
     return cmd
 
 
@@ -117,26 +131,41 @@ class BwrapSandbox(Sandbox):
                 pairs += ["--setenv", key, value]
             cmd = cmd[:terminator] + pairs + cmd[terminator:]
         started = now()
-        from .limits import children_rusage, make_preexec
+        from yantra_server.seal.env import sealed_environment
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-            preexec_fn=make_preexec(self.limits),
-        )
-        if stdin is not None and proc.stdin is not None:
-            proc.stdin.write(stdin.encode())
-            proc.stdin.close()
-        stdout, stderr, timed_out, truncated = await drain_process(
-            proc,
-            limits=self.limits,
-            timeout_s=timeout_s or self.limits.timeout_s,
-            on_output=on_output,
-        )
+        # A separate parent reaps only this command; process-wide RUSAGE_CHILDREN
+        # incorrectly charges previously unloaded inference engines to this job.
+        with tempfile.TemporaryFile() as report:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-I",
+                str(Path(__file__).with_name("_meter.py")),
+                str(report.fileno()),
+                self.limits.model_dump_json(),
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+                pass_fds=(report.fileno(),),
+                env=sealed_environment(),
+            )
+            if stdin is not None and proc.stdin is not None:
+                proc.stdin.write(stdin.encode())
+                proc.stdin.close()
+            stdout, stderr, timed_out, truncated = await drain_process(
+                proc,
+                limits=self.limits,
+                timeout_s=timeout_s or self.limits.timeout_s,
+                on_output=on_output,
+            )
+            report.seek(0)
+            try:
+                measured = json.loads(report.read(4096))
+                cpu_s, peak_rss = measured["cpu_s"], measured["peak_rss_mb"]
+            except (ValueError, KeyError):
+                # Forced termination may prevent reporting; unknown is not zero.
+                cpu_s, peak_rss = None, None
         wall = now() - started
-        cpu_s, peak_rss = children_rusage()
         return SandboxResult(
             exit_code=proc.returncode if proc.returncode is not None else -1,
             stdout=stdout,
@@ -146,7 +175,7 @@ class BwrapSandbox(Sandbox):
             peak_rss_mb=peak_rss,
             timed_out=timed_out,
             files_changed=self.diff_files(before),
-            blocked_net_attempts=0,  # --unshare-net: there is no network namespace at all
+            blocked_net_attempts=0,  # No attempt counter is available; namespace denial is separate.
             backend=self.name,
             truncated=truncated,
         )

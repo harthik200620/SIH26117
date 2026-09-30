@@ -1,5 +1,7 @@
 # YANTRA — judge demo script (SIH26117, MRPL)
 
+> **SUPERSEDED, 28 September 2026. Do not present this historical script.** Its mock/sidecar results and broad security/timing claims do not establish real-model performance. Use [the current evidence-led script](PITCH_CURRENT.md) and [requirements audit](SIH26117_REQUIREMENTS.md).
+
 One line: **a sealed, on-premise agentic AI workbench for refinery engineering** — plans,
 executes, verifies and renders cited deliverables from plant documents, with zero egress,
 on open-weight models under 120B.

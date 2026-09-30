@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Citation(BaseModel):
@@ -12,10 +12,23 @@ class Citation(BaseModel):
     source: str = ""  # resolved "Title, Rev, p.N"
 
 
-class TableSpec(BaseModel):
+class TableBase[CellT](BaseModel):
     caption: str = ""
-    columns: list[str]
-    rows: list[list[str]]
+    columns: list[str] = Field(min_length=1, max_length=128)
+    rows: list[list[CellT]]
+
+    @model_validator(mode="after")
+    def rectangular(self) -> Self:
+        if len(self.rows) > 10000:
+            raise ValueError("A table is limited to 10000 rows; split larger datasets")
+        for number, row in enumerate(self.rows, 1):
+            if len(row) != len(self.columns):
+                raise ValueError(f"Row {number} has {len(row)} cells; expected {len(self.columns)}")
+        return self
+
+
+class TableSpec(TableBase[str]):
+    pass
 
 
 class FigureSpec(BaseModel):
@@ -85,9 +98,49 @@ class EmailDraft(BaseModel):
     body: str
 
 
+class ComputedColumn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    expression: str = Field(min_length=1, max_length=1000)
+
+
+class SpreadsheetTable(TableBase[str | int | float | bool | None]):
+    model_config = ConfigDict(allow_inf_nan=False)
+    literal_inputs: bool = False
+    computed_columns: list[ComputedColumn] = Field(default_factory=list, max_length=127)
+
+    @model_validator(mode="after")
+    def validate_computed_columns(self) -> Self:
+        if len(self.columns) + len(self.computed_columns) > 128:
+            raise ValueError("Input and computed columns together must not exceed 128")
+        if not self.computed_columns:
+            return self
+        from .column_formulas import compile_row_expression
+
+        available = list(self.columns)
+        for computed in self.computed_columns:
+            if not computed.name.strip():
+                raise ValueError("Computed column names must be nonblank")
+            if computed.name in available:
+                raise ValueError(
+                    f"Computed column {computed.name!r} is already declared. Input columns and rows "
+                    "must omit calculated outputs; computed_columns appends them automatically. "
+                    "Do not supply a precomputed value for the same output."
+                )
+            try:
+                compile_row_expression(computed.expression, available, 2)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Computed column {computed.name!r}: {exc}. Expression: {computed.expression!r}"
+                ) from exc
+            available.append(computed.name)
+        return self
+
+
 class DataTable(BaseModel):
     title: str = "Data"
-    sheets: list[TableSpec] = Field(default_factory=list)
+    sheets: list[SpreadsheetTable] = Field(min_length=1, max_length=64)
+    summary: str = ""
+    appendix: Appendix = Field(default_factory=Appendix)
 
 
 class CodeChangeSummary(BaseModel):

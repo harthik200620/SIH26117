@@ -18,7 +18,12 @@ function inline(text: string, keyBase: string): React.ReactNode[] {
     else if (tok.startsWith("*")) out.push(<i key={key}>{tok.slice(1, -1)}</i>);
     else {
       const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok);
-      if (mm) out.push(<a key={key} href={mm[2]} target="_blank" rel="noreferrer">{mm[1]}</a>);
+      if (mm) {
+        // Model-supplied URLs can embed confidential text. Work output must not
+        // turn them into an outbound navigation path; setup links live separately.
+        if (mm[2]?.startsWith("#")) out.push(<a key={key} href={mm[2]}>{mm[1]}</a>);
+        else out.push(<span key={key} title="Navigation from generated content is disabled">{mm[1]} ({mm[2]})</span>);
+      }
     }
     last = m.index + tok.length;
   }

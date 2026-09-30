@@ -29,6 +29,14 @@ class TimestampMixin:
     )
 
 
+class RunEventRow(Base):
+    __tablename__ = "run_events"
+    run_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    frame: Mapped[dict[str, Any]] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 # ------------------------------------------------------------------ sessions & runs
 
 

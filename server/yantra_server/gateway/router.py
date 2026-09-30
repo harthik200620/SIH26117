@@ -295,6 +295,11 @@ class Router:
 
     def _capability_gap(self, manifest: ModelManifest, need: RouteNeed) -> str | None:
         caps = set(manifest.capabilities)
+        required = {"embed": "embed", "embed_visual": "embed", "rerank": "rerank", "rerank_visual": "rerank", "vision": "vision", "ocr": "ocr"}.get(need.role)
+        if required and required not in caps:
+            return f"no {required} capability"
+        if manifest.params_b >= 120 and manifest.engine != "mock":
+            return "exceeds the conservative 120B parameter cap"
         if need.needs_vision and "vision" not in caps:
             return "no vision capability"
         if need.needs_json and not ({"json", "embed", "rerank", "ocr"} & caps):
